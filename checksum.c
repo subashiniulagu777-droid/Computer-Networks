@@ -1,0 +1,1980 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#include<time.h>
+#define MAX_HOSTS 20
+#define MAX_TEXT 1000
+#define MAX_BINARY 10000
+#define MAX_PACKETS 200
+#define MAX_FRAMES 500
+typedef struct
+{
+    char url[50];
+    char ip[20];
+    char mac[20];
+}Host;
+
+Host hosts[MAX_HOSTS];
+
+int hostCount=0;
+
+int choice;
+
+/* Message */
+
+char message[MAX_TEXT];
+
+char binaryMessage[MAX_BINARY];
+
+/* Packet Information */
+
+int packetSize;
+
+char packets[MAX_PACKETS][500];
+
+int packetCount=0;
+
+/* Frame Information */
+
+int frameSize;
+
+char frames[MAX_FRAMES][500];
+
+int framePacketNumber[MAX_FRAMES];
+
+int frameCount=0;
+
+/* Source Destination */
+
+char sourceURL[50];
+
+char destinationURL[50];
+
+int sourceIndex;
+
+int destinationIndex;
+
+/* Binary IP */
+
+char sourceIPBinary[300];
+
+char destinationIPBinary[300];
+
+/* Binary MAC */
+
+char sourceMACBinary[500];
+
+char destinationMACBinary[500];
+
+/* Port Numbers */
+
+int sourcePort;
+int destinationPort;
+
+char sourcePortBinary[20];
+char destinationPortBinary[20];
+char stuffedFrames[MAX_FRAMES][1000];
+char destuffedFrames[MAX_FRAMES][1000];
+char receivemessage[100];
+int protocolChoice;
+char protocolName[20];
+char protocolBinary[9];
+char frameChecksum[MAX_FRAMES][17];
+char stuffedPPPFrames[MAX_FRAMES][3000];
+char addressField[]="11111111";
+char controlField[]="00000011";
+char receiverFrame[MAX_FRAMES][1000];
+char receiverStuffedFrames[MAX_FRAMES][1000];
+
+
+/********************************************************************
+                FUNCTION DECLARATIONS
+********************************************************************/
+
+/* Host Table */
+
+void initializeTable();
+
+void displayTable();
+
+void addHost();
+
+void updateHost();
+
+void deleteHost();
+
+int findHost(char url[]);
+
+
+/* File */
+
+void writeFile();
+
+void readFile();
+
+
+/* Binary */
+
+void charToBinary(unsigned char ch,char binary[]);
+
+void textToBinary();
+
+
+/* Packet */
+
+void createPackets();
+
+void displayPackets();
+
+
+/* Frame */
+
+void createFrames();
+
+void displayFrames();
+
+
+/* Address Conversion */
+
+void ipToBinary();
+
+void macToBinary();
+
+
+/* Layers */
+
+void applicationLayer();
+
+void transportLayer();
+
+void networkLayer();
+
+void dataLinkLayer();
+
+void physicalLayer();
+
+
+/* Final Output */
+
+void printTransmission();
+
+void generatePorts();
+void portToBinary(int port,char binary[]);
+void printAll();
+void printPPPFrame(char data[],char checksum[]);
+void byteStuffing();
+void byteDestuffing();
+char binaryToChar(char binary[]);
+void printOriginalMessage();
+void writeByteOutputToFile();
+void selectProtocol();
+void receiverProtocol();
+/* Checksum */
+void printBitPositions(char frame[]);
+void calculateChecksum(char payload[],char checksum[]);
+
+unsigned short addWord(unsigned short sum,unsigned short word);
+
+unsigned short binaryStringToWord(char bits[]);
+
+void wordToBinary(unsigned short value,char bits[]);
+
+void printWord(char title[],char bits[]);
+
+void verifyCarry(unsigned short *sum);
+int verifyChecksum(char payload[], char receivedChecksum[]);
+void modifyFrameBits(int index);
+void extractReceiverFields(int index);
+void printChecksumCalculation(char address[],
+                              char control[],
+                              char protocol[],
+                              char payload[],
+                              char checksum[]);
+void buildReceiverFrame(int index);
+void receiverByteStuffing(int index);
+
+/********************************************************************
+                        MAIN FUNCTION
+********************************************************************/
+
+int main()
+{
+
+    initializeTable();
+
+    while(1)
+    {
+        printf("\n");
+        printf("=====================================\n");
+        printf("HOST TABLE MENU\n");
+        printf("=====================================\n");
+
+        printf("1.Display Host Table\n");
+        printf("2.Add Host\n");
+        printf("3.Update Host\n");
+        printf("4.Delete Host\n");
+        printf("5.Start Simulation\n");
+
+        printf("\nEnter Choice : ");
+
+        scanf("%d",&choice);
+
+        switch(choice)
+        {
+            case 1:
+
+                displayTable();
+
+                break;
+
+            case 2:
+
+                addHost();
+
+                break;
+
+            case 3:
+
+                updateHost();
+
+                break;
+
+            case 4:
+
+                deleteHost();
+
+                break;
+
+            case 5:
+
+                goto simulation;
+
+            default:
+
+                printf("\nInvalid Choice\n");
+        }
+    }
+
+simulation:
+
+    displayTable();
+
+        writeFile();
+
+        readFile();
+
+        textToBinary();
+
+        printf("\nEnter Packet Size (Bits) : ");
+        scanf("%d",&packetSize);
+
+        createPackets();
+
+        displayPackets();
+
+        printf("\nEnter Frame Size (Bits) : ");
+        scanf("%d",&frameSize);
+
+        createFrames();
+
+        displayFrames();
+
+        printf("\nEnter Source URL : ");
+        scanf("%s",sourceURL);
+
+        printf("Enter Destination URL : ");
+        scanf("%s",destinationURL);
+
+        sourceIndex=findHost(sourceURL);
+
+        destinationIndex=findHost(destinationURL);
+
+        ipToBinary();
+
+        macToBinary();
+
+        generatePorts();
+        selectProtocol();
+
+        applicationLayer();
+
+        transportLayer();
+
+        networkLayer();
+
+        dataLinkLayer();
+
+
+        physicalLayer();
+
+        printTransmission();
+        printAll();
+
+
+    return 0;
+}
+/********************************************************************
+                    INITIALIZE HOST TABLE
+********************************************************************/
+
+void initializeTable()
+{
+    strcpy(hosts[0].url,"google.com");
+    strcpy(hosts[0].ip,"142.250.183.14");
+    strcpy(hosts[0].mac,"AA:BB:CC:11:22:33");
+
+    strcpy(hosts[1].url,"youtube.com");
+    strcpy(hosts[1].ip,"142.250.196.46");
+    strcpy(hosts[1].mac,"44:55:66:77:88:99");
+
+    strcpy(hosts[2].url,"facebook.com");
+    strcpy(hosts[2].ip,"157.240.22.35");
+    strcpy(hosts[2].mac,"10:20:30:40:50:60");
+
+    strcpy(hosts[3].url,"college.edu");
+    strcpy(hosts[3].ip,"192.168.1.20");
+    strcpy(hosts[3].mac,"12:34:56:78:9A:BC");
+
+    strcpy(hosts[4].url,"server.com");
+    strcpy(hosts[4].ip,"10.10.10.10");
+    strcpy(hosts[4].mac,"AB:CD:EF:12:34:56");
+
+    hostCount=5;
+}
+unsigned short binaryStringToWord(char bits[])
+{
+    unsigned short value=0;
+    int i;
+
+    for(i=0;i<16;i++)
+    {
+        value<<=1;
+
+        if(bits[i]=='1')
+            value|=1;
+    }
+
+    return value;
+}
+void wordToBinary(unsigned short value,char bits[])
+{
+    int i;
+
+    for(i=15;i>=0;i--)
+    {
+        bits[15-i]=((value>>i)&1)+'0';
+    }
+
+    bits[16]='\0';
+}
+void buildReceiverFrame(int index)
+{
+    receiverFrame[index][0]='\0';
+
+    strcat(receiverFrame[index],addressField);
+    strcat(receiverFrame[index],controlField);
+    strcat(receiverFrame[index],protocolBinary);
+    strcat(receiverFrame[index],destuffedFrames[index]);
+    strcat(receiverFrame[index],frameChecksum[index]);
+}
+void verifyCarry(unsigned short *sum)
+{
+    while((*sum)>>16)
+    {
+        *sum=(*sum&0xFFFF)+((*sum)>>16);
+    }
+}
+unsigned short addWord(unsigned short sum,unsigned short word)
+{
+    unsigned int temp;
+
+    temp=(unsigned int)sum+(unsigned int)word;
+
+    if(temp>0xFFFF)
+    {
+        printf("Carry Generated\n");
+
+        temp=(temp&0xFFFF)+(temp>>16);
+
+        printf("Carry Wrapped Around\n");
+    }
+
+    return (unsigned short)temp;
+}
+
+void printWord(char title[],char bits[])
+{
+    printf("%-20s%s\n",title,bits);
+}
+void receiverByteStuffing(int index)
+{
+    int j;
+    char byte[9];
+
+    receiverStuffedFrames[index][0]='\0';
+
+    for(j=0;j<strlen(destuffedFrames[index]);j+=8)
+    {
+        strncpy(byte,&destuffedFrames[index][j],8);
+        byte[8]='\0';
+
+        if(strcmp(byte,"01111110")==0 ||
+           strcmp(byte,"01111101")==0)
+        {
+            strcat(receiverStuffedFrames[index],"01111101");
+        }
+
+        strcat(receiverStuffedFrames[index],byte);
+    }
+}
+void calculateChecksum(char payload[], char checksum[])
+{
+    char word[17];
+    char sumBinary[17];
+
+    unsigned short sum = 0;
+    unsigned short value;
+
+    int i, j;
+    int payloadLength = strlen(payload);
+
+    printf("\n=========================================\n");
+    printf("CHECKSUM GENERATION\n");
+    printf("=========================================\n");
+
+    /* ---------------- Word 1 ---------------- */
+
+    strcpy(word, addressField);
+    strcat(word, controlField);
+
+    printWord("Word 1 (Address+Control) :", word);
+
+    value = binaryStringToWord(word);
+
+    printf("\nAdding:\n");
+    printf("%s\n", word);
+
+    sum = addWord(sum, value);
+
+    wordToBinary(sum, sumBinary);
+
+    printf("Running Sum : %s\n\n", sumBinary);
+
+    /* ---------------- Word 2 ---------------- */
+
+    memset(word,'0',16);
+    word[16]='\0';
+
+    for(i=0;i<8;i++)
+        word[i]=protocolBinary[i];
+
+    for(i=0;i<8;i++)
+    {
+        if(i<payloadLength)
+            word[8+i]=payload[i];
+    }
+
+    printWord("Word 2 (Protocol+Payload):",word);
+
+    value=binaryStringToWord(word);
+
+    printf("Adding:\n");
+    printf("%s\n",word);
+
+    sum=addWord(sum,value);
+
+    wordToBinary(sum,sumBinary);
+
+    printf("Running Sum : %s\n\n",sumBinary);
+
+    /* ---------------- Remaining Payload ---------------- */
+
+    for(i=8;i<payloadLength;i+=16)
+    {
+        memset(word,'0',16);
+        word[16]='\0';
+
+        for(j=0;j<16 && (i+j)<payloadLength;j++)
+        {
+            word[j]=payload[i+j];
+        }
+
+        printWord("Payload Word :",word);
+
+        value=binaryStringToWord(word);
+
+        printf("Adding:\n");
+        printf("%s\n",word);
+
+        sum=addWord(sum,value);
+
+        wordToBinary(sum,sumBinary);
+
+        printf("Running Sum : %s\n\n",sumBinary);
+    }
+
+    /* ---------------- Final Checksum ---------------- */
+
+    printf("-----------------------------------------\n");
+
+    printf("Final Sum Before Complement : ");
+
+    wordToBinary(sum,sumBinary);
+
+    printf("%s\n",sumBinary);
+
+    sum=~sum;
+
+    wordToBinary(sum,checksum);
+
+    printf("Checksum (16-bit)           : %s\n",checksum);
+
+    printf("-----------------------------------------\n");
+}
+int verifyChecksum(char payload[],char receivedChecksum[])
+{
+    char word[17];
+    char result[17];
+
+    unsigned short sum=0;
+    unsigned short value;
+
+    int i,j;
+    int payloadLength=strlen(payload);
+
+    printf("\n");
+    printf("=========================================\n");
+    printf("CHECKSUM VERIFICATION\n");
+    printf("=========================================\n");
+
+    /* -------- Address + Control -------- */
+
+    strcpy(word,addressField);
+    strcat(word,controlField);
+
+    printf("\nWord 1 (Address+Control)\n");
+    printf("%s\n",word);
+
+    value=binaryStringToWord(word);
+
+    sum=addWord(sum,value);
+
+    wordToBinary(sum,result);
+
+    printf("Running Sum : %s\n",result);
+
+    /* -------- Protocol + Payload Byte -------- */
+
+    memset(word,'0',16);
+    word[16]='\0';
+
+    for(i=0;i<8;i++)
+        word[i]=protocolBinary[i];
+
+    for(i=0;i<8 && i<payloadLength;i++)
+        word[8+i]=payload[i];
+
+    printf("\nWord 2 (Protocol+Payload)\n");
+    printf("%s\n",word);
+
+    value=binaryStringToWord(word);
+
+    sum=addWord(sum,value);
+
+    wordToBinary(sum,result);
+
+    printf("Running Sum : %s\n",result);
+
+    /* -------- Remaining Payload -------- */
+
+    for(i=8;i<payloadLength;i+=16)
+    {
+        memset(word,'0',16);
+        word[16]='\0';
+
+        for(j=0;j<16 && (i+j)<payloadLength;j++)
+            word[j]=payload[i+j];
+
+        printf("\nPayload Word\n");
+        printf("%s\n",word);
+
+        value=binaryStringToWord(word);
+
+        sum=addWord(sum,value);
+
+        wordToBinary(sum,result);
+
+        printf("Running Sum : %s\n",result);
+    }
+
+    /* -------- Received Checksum -------- */
+
+    printf("\nReceived Checksum\n");
+    printf("%s\n",receivedChecksum);
+
+    value=binaryStringToWord(receivedChecksum);
+
+    sum=addWord(sum,value);
+
+    wordToBinary(sum,result);
+
+    printf("\nFinal Sum : %s\n",result);
+
+    if(result[0]=='1' &&
+       result[1]=='1' &&
+       result[2]=='1' &&
+       result[3]=='1' &&
+       result[4]=='1' &&
+       result[5]=='1' &&
+       result[6]=='1' &&
+       result[7]=='1' &&
+       result[8]=='1' &&
+       result[9]=='1' &&
+       result[10]=='1' &&
+       result[11]=='1' &&
+       result[12]=='1' &&
+       result[13]=='1' &&
+       result[14]=='1' &&
+       result[15]=='1')
+    {
+        printf("\nFRAME VALID\n");
+
+        return 1;
+    }
+
+    printf("\nFRAME INVALID\n");
+
+    return 0;
+}
+void calculateAllFrameChecksums()
+{
+    int i;
+
+    printf("\n=========================================\n");
+    printf("PPP CHECKSUM GENERATION\n");
+    printf("=========================================\n");
+
+    for(i=0;i<frameCount;i++)
+    {
+        printf("\nFrame %d\n", i+1);
+
+        calculateChecksum(stuffedFrames[i], frameChecksum[i]);
+
+        printf("\nGenerated FCS : %s\n", frameChecksum[i]);
+
+        printf("\nPPP Frame\n\n");
+
+        printPPPFrame(frames[i], frameChecksum[i]);
+
+        printf("\n");
+    }
+}
+void printBitPositions(char frame[])
+{
+    int i;
+
+    printf("\nBit Positions\n");
+
+    for(i=0;i<strlen(frame);i++)
+    {
+        printf("%2d ",i+1);
+    }
+
+    printf("\n");
+
+    for(i=0;i<strlen(frame);i++)
+    {
+        printf(" %c ",frame[i]);
+    }
+
+    printf("\n");
+}
+void modifyFrameBits(int index)
+{
+    int choice;
+    int pos1,pos2;
+    int length=strlen(receiverFrame[index]);
+
+    printf("\n");
+    printf("=========================================\n");
+    printf("BIT MODIFICATION\n");
+    printf("=========================================\n");
+
+    printf("\n1. Modify One Bit");
+    printf("\n2. Modify Two Bits");
+
+    printf("\n\nEnter Choice : ");
+    scanf("%d",&choice);
+
+    if(choice==1)
+    {
+                printBitPositions(receiverFrame[index]);
+        printf("\nEnter Bit Position (1-%d): ",length);
+        scanf("%d",&pos1);
+                if(pos1<=8)
+                        printf("\nField : Address\n");
+
+                else if(pos1<=16)
+                        printf("\nField : Control\n");
+
+                else if(pos1<=24)
+                        printf("\nField : Protocol\n");
+
+                else if(pos1<=strlen(receiverFrame[index])-16)
+                        printf("\nField : Payload\n");
+
+                else
+                        printf("\nField : FCS\n");
+
+        if(pos1>=1 && pos1<=length)
+        {
+            receiverFrame[index][pos1-1]=
+                (receiverFrame[index][pos1-1]=='0')?'1':'0';
+        }
+    }
+
+    else if(choice==2)
+    {
+        printf("\nEnter First Bit Position : ");
+        scanf("%d",&pos1);
+
+        printf("\nEnter Second Bit Position : ");
+        scanf("%d",&pos2);
+
+        if(pos1>=1 && pos1<=length)
+            receiverFrame[index][pos1-1]=
+                (receiverFrame[index][pos1-1]=='0')?'1':'0';
+
+        if(pos2>=1 && pos2<=length)
+            receiverFrame[index][pos2-1]=
+                (receiverFrame[index][pos2-1]=='0')?'1':'0';
+    }
+
+    printf("\nModified Receiver Frame\n\n");
+    printf("%s\n",receiverFrame[index]);
+
+}
+void extractReceiverFields(int index)
+{
+    strncpy(addressField,receiverFrame[index],8);
+    addressField[8]='\0';
+
+    strncpy(controlField,receiverFrame[index]+8,8);
+    controlField[8]='\0';
+
+    strncpy(protocolBinary,receiverFrame[index]+16,8);
+    protocolBinary[8]='\0';
+
+    int total=strlen(receiverFrame[index]);
+
+    int payloadLength=total-40;
+
+    strncpy(destuffedFrames[index],receiverFrame[index]+24,payloadLength);
+    destuffedFrames[index][payloadLength]='\0';
+
+    strncpy(frameChecksum[index],
+            receiverFrame[index]+24+payloadLength,
+            16);
+
+    frameChecksum[index][16]='\0';
+}
+
+
+void selectProtocol()
+{
+    printf("\nSelect PPP Protocol\n");
+    printf("1. LCP\n");
+    printf("2. PAP\n");
+    printf("3. CHAP\n");
+    printf("4. NCP\n");
+
+    printf("\nEnter Choice : ");
+    scanf("%d",&protocolChoice);
+
+    switch(protocolChoice)
+    {
+        case 1:
+            strcpy(protocolName,"LCP");
+            strcpy(protocolBinary,"11000001");
+            break;
+
+        case 2:
+            strcpy(protocolName,"PAP");
+            strcpy(protocolBinary,"11000010");
+            break;
+
+        case 3:
+            strcpy(protocolName,"CHAP");
+            strcpy(protocolBinary,"11000011");
+            break;
+
+        case 4:
+            strcpy(protocolName,"NCP");
+            strcpy(protocolBinary,"11000100");
+            break;
+
+        default:
+            printf("\nInvalid Choice. Default LCP Selected.\n");
+            strcpy(protocolName,"LCP");
+            strcpy(protocolBinary,"11000001");
+    }
+
+    printf("\nSelected Protocol : %s\n",protocolName);
+}
+void receiverProtocol()
+{
+    FILE *fp;
+
+    fp=fopen("output2.txt","w");
+
+    if(fp==NULL)
+    {
+        printf("Cannot create output2.txt\n");
+        return;
+    }
+
+    fprintf(fp,"====================================\n");
+    fprintf(fp,"RECEIVER SIDE\n");
+    fprintf(fp,"====================================\n\n");
+
+    fprintf(fp,"Received Protocol Binary : %s\n",protocolBinary);
+
+    if(strcmp(protocolBinary,"11000001")==0)
+    {
+        fprintf(fp,"Protocol Identified : LCP\n");
+        printf("\nReceiver Identified Protocol : LCP\n");
+    }
+    else if(strcmp(protocolBinary,"11000010")==0)
+    {
+        fprintf(fp,"Protocol Identified : PAP\n");
+        printf("\nReceiver Identified Protocol : PAP\n");
+    }
+    else if(strcmp(protocolBinary,"11000011")==0)
+    {
+        fprintf(fp,"Protocol Identified : CHAP\n");
+        printf("\nReceiver Identified Protocol : CHAP\n");
+    }
+    else if(strcmp(protocolBinary,"11000100")==0)
+    {
+        fprintf(fp,"Protocol Identified : NCP\n");
+        printf("\nReceiver Identified Protocol : NCP\n");
+    }
+
+    fclose(fp);
+
+    printf("Receiver Output Saved in output2.txt\n");
+}
+
+/********************************************************************
+                    DISPLAY HOST TABLE
+********************************************************************/
+
+void displayTable()
+{
+    int i;
+
+    printf("\n");
+    printf("=====================================================================\n");
+    printf("                         HOST TABLE\n");
+    printf("=====================================================================\n");
+
+    printf("%-5s %-20s %-18s %-20s\n",
+           "No",
+           "URL",
+           "IP Address",
+           "MAC Address");
+
+    printf("---------------------------------------------------------------------\n");
+
+    for(i=0;i<hostCount;i++)
+    {
+        printf("%-5d %-20s %-18s %-20s\n",
+               i+1,
+               hosts[i].url,
+               hosts[i].ip,
+               hosts[i].mac);
+    }
+
+    printf("=====================================================================\n");
+}
+
+/********************************************************************
+            CONVERT PORT NUMBER TO 16-BIT BINARY
+********************************************************************/
+
+void portToBinary(int port,char binary[])
+{
+    int i;
+
+    for(i=15;i>=0;i--)
+    {
+        if((port>>i)&1)
+        {
+            binary[15-i]='1';
+        }
+        else
+        {
+            binary[15-i]='0';
+        }
+    }
+
+    binary[16]='\0';
+}
+/********************************************************************
+                GENERATE RANDOM PORT NUMBERS
+********************************************************************/
+
+void generatePorts()
+{
+    srand(time(NULL));
+
+    sourcePort=1024+rand()%64512;
+    destinationPort=1024+rand()%64512;
+
+    portToBinary(sourcePort,sourcePortBinary);
+    portToBinary(destinationPort,destinationPortBinary);
+}
+
+/********************************************************************
+                        ADD HOST
+********************************************************************/
+
+void addHost()
+{
+    if(hostCount>=MAX_HOSTS)
+    {
+        printf("\nHost Table Full\n");
+        return;
+    }
+
+    printf("\nEnter URL : ");
+    scanf("%s",hosts[hostCount].url);
+
+    printf("Enter IP Address : ");
+    scanf("%s",hosts[hostCount].ip);
+
+    printf("Enter MAC Address : ");
+    scanf("%s",hosts[hostCount].mac);
+
+    hostCount++;
+
+    printf("\nHost Added Successfully.\n");
+}
+
+/********************************************************************
+                    UPDATE HOST
+********************************************************************/
+
+void updateHost()
+{
+    char url[50];
+
+    int index;
+
+    printf("\nEnter URL to Update : ");
+    scanf("%s",url);
+
+    index=findHost(url);
+
+    if(index==-1)
+    {
+        printf("\nHost Not Found\n");
+        return;
+    }
+
+    printf("\nEnter New URL : ");
+    scanf("%s",hosts[index].url);
+
+    printf("Enter New IP : ");
+    scanf("%s",hosts[index].ip);
+
+    printf("Enter New MAC : ");
+    scanf("%s",hosts[index].mac);
+
+    printf("\nHost Updated Successfully\n");
+}
+
+/********************************************************************
+                    DELETE HOST
+********************************************************************/
+
+void deleteHost()
+{
+    char url[50];
+
+    int index;
+
+    int i;
+
+    printf("\nEnter URL to Delete : ");
+    scanf("%s",url);
+
+    index=findHost(url);
+
+    if(index==-1)
+    {
+        printf("\nHost Not Found\n");
+        return;
+    }
+
+    for(i=index;i<hostCount-1;i++)
+    {
+        hosts[i]=hosts[i+1];
+    }
+
+    hostCount--;
+
+    printf("\nHost Deleted Successfully\n");
+}
+
+/********************************************************************
+                        FIND HOST
+********************************************************************/
+
+int findHost(char url[])
+{
+    int i;
+
+    for(i=0;i<hostCount;i++)
+    {
+        if(strcmp(hosts[i].url,url)==0)
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/********************************************************************
+                WRITE MESSAGE TO FILE
+********************************************************************/
+
+void writeFile()
+{
+    FILE *fp;
+
+    int ch;
+
+    fp=fopen("message.txt","w");
+
+    if(fp==NULL)
+    {
+        printf("\nCannot Create File\n");
+        exit(0);
+    }
+
+    printf("\nEnter Message : ");
+
+    while((ch=getchar())!='\n' && ch!=EOF);
+
+    fgets(message,MAX_TEXT,stdin);
+
+    fputs(message,fp);
+
+    fclose(fp);
+
+    printf("\nMessage Written Successfully.\n");
+}
+
+/********************************************************************
+                READ MESSAGE FROM FILE
+********************************************************************/
+
+void readFile()
+{
+    FILE *fp;
+
+    fp=fopen("message.txt","r");
+
+    if(fp==NULL)
+    {
+        printf("\nCannot Open File\n");
+        exit(0);
+    }
+
+    fgets(message,MAX_TEXT,fp);
+
+    fclose(fp);
+
+    printf("\n");
+    printf("=========================================\n");
+    printf("MESSAGE READ FROM FILE\n");
+    printf("=========================================\n");
+
+    printf("%s\n",message);
+}
+/********************************************************************
+            CONVERT ONE CHARACTER TO BINARY
+********************************************************************/
+
+void charToBinary(unsigned char ch,char binary[])
+{
+    int i;
+
+    for(i=7;i>=0;i--)
+    {
+        if((ch>>i)&1)
+        {
+            binary[7-i]='1';
+        }
+        else
+        {
+            binary[7-i]='0';
+        }
+    }
+
+    binary[8]='\0';
+}
+
+/********************************************************************
+            CONVERT COMPLETE MESSAGE TO BINARY
+********************************************************************/
+
+void textToBinary()
+{
+    int i;
+    int len;
+
+    char temp[9];
+
+    binaryMessage[0]='\0';
+
+    printf("\n");
+    printf("=========================================\n");
+    printf("BINARY CONVERSION\n");
+    printf("=========================================\n");
+
+    for(i=0;message[i]!='\0';i++)
+    {
+        if(message[i]=='\n')
+        {
+            continue;
+        }
+
+        charToBinary(message[i],temp);
+
+        printf("%c --> %s\n",message[i],temp);
+
+        strcat(binaryMessage,temp);
+    }
+
+    printf("\nComplete Binary Message\n\n");
+
+    printf("%s\n",binaryMessage);
+
+    len=strlen(binaryMessage);
+
+    printf("\nBinary Length : %d Bits\n",len);
+}
+
+/********************************************************************
+                    CREATE PACKETS
+********************************************************************/
+
+void createPackets()
+{
+    int i;
+    int j;
+    int length;
+
+    packetCount=0;
+
+    length=strlen(binaryMessage);
+
+    for(i=0;i<length;i=i+packetSize)
+    {
+        for(j=0;j<packetSize;j++)
+        {
+            if((i+j)<length)
+            {
+                packets[packetCount][j]=binaryMessage[i+j];
+            }
+            else
+            {
+                packets[packetCount][j]='0';      // Padding Zero
+            }
+        }
+
+        packets[packetCount][packetSize]='\0';
+
+        packetCount++;
+    }
+}
+
+
+/********************************************************************
+                DISPLAY PACKETS
+********************************************************************/
+
+void displayPackets()
+{
+    int i;
+
+    printf("\n");
+
+    printf("=========================================\n");
+    printf("PACKET CREATION\n");
+    printf("=========================================\n");
+
+    printf("\nPacket Size : %d Bits\n",packetSize);
+
+    printf("Total Packets : %d\n\n",packetCount);
+
+    for(i=0;i<packetCount;i++)
+    {
+        printf("-----------------------------------------\n");
+
+        printf("Packet %d\n",i+1);
+
+        printf("-----------------------------------------\n");
+
+        printf("%s\n",packets[i]);
+
+        printf("\n");
+    }
+}
+
+void createFrames()
+{
+    int i;
+    int j;
+    int k;
+    int length;
+
+    frameCount=0;
+
+    for(i=0;i<packetCount;i++)
+    {
+        length=strlen(packets[i]);
+
+        for(j=0;j<length;j=j+frameSize)
+        {
+            for(k=0;k<frameSize;k++)
+            {
+                if((j+k)<length)
+                {
+                    frames[frameCount][k]=packets[i][j+k];
+                }
+                else
+                {
+                    frames[frameCount][k]='0';    // Padding Zero
+                }
+            }
+
+            frames[frameCount][frameSize]='\0';
+
+            framePacketNumber[frameCount]=i+1;
+
+            frameCount++;
+        }
+    }
+}
+void writeByteOutputToFile()
+{
+    FILE *fp;
+    int i;
+    char ch;
+
+    fp = fopen("output.txt", "w");
+
+    if(fp == NULL)
+    {
+        printf("Cannot create output.txt\n");
+        return;
+    }
+
+    fprintf(fp,"=========================================\n");
+    fprintf(fp,"BYTE STUFFING AND DESTUFFING OUTPUT\n");
+    fprintf(fp,"=========================================\n\n");
+
+    for(i=0;i<frameCount;i++)
+    {
+        fprintf(fp,"Frame %d\n",i+1);
+        fprintf(fp,"-----------------------------------------\n");
+
+        fprintf(fp,"Original Frame :\n%s\n\n",frames[i]);
+
+        fprintf(fp,"PPP Frame After Byte Stuffing\n");
+        fprintf(fp,
+                "01111110 %s %s %s %s %s 01111110\n",
+                addressField,
+                controlField,
+                protocolBinary,
+                stuffedFrames[i],
+                frameChecksum[i]);
+
+        fprintf(fp,"PPP Frame After Byte Destuffing\n");
+                fprintf(fp,
+                "01111110 %s %s %s %s %s 01111110\n",
+                addressField,
+                controlField,
+                protocolBinary,
+                destuffedFrames[i],
+                frameChecksum[i]);
+    }
+
+    fprintf(fp,"\n=========================================\n");
+    fprintf(fp,"ORIGINAL MESSAGE AFTER BYTE DESTUFFING\n");
+    fprintf(fp,"=========================================\n\n");
+
+    for(i=0;i<frameCount;i++)
+    {
+        ch = binaryToChar(destuffedFrames[i]);
+
+        if(ch!='\0')
+            fputc(ch,fp);
+    }
+
+    fprintf(fp,"\n");
+        fprintf(fp,"\n\n=========================================\n");
+        fprintf(fp,"RECEIVER SIDE PROTOCOL IDENTIFICATION\n");
+        fprintf(fp,"=========================================\n\n");
+
+        fprintf(fp,"Received Protocol Binary : %s\n",protocolBinary);
+
+        if(strcmp(protocolBinary,"11000001")==0)
+        {
+                fprintf(fp,"Protocol Identified : LCP\n");
+        }
+        else if(strcmp(protocolBinary,"11000010")==0)
+        {
+                fprintf(fp,"Protocol Identified : PAP\n");
+        }
+        else if(strcmp(protocolBinary,"11000011")==0)
+        {
+                fprintf(fp,"Protocol Identified : CHAP\n");
+        }
+        else if(strcmp(protocolBinary,"11000100")==0)
+        {
+                fprintf(fp,"Protocol Identified : NCP\n");
+        }
+
+
+    fclose(fp);
+
+    printf("\nByte Stuffing Output saved to output.txt\n");
+}
+void displayFrames()
+{
+    int i;
+    int currentPacket=0;
+
+    printf("\n");
+    printf("=========================================\n");
+    printf("FRAME CREATION\n");
+    printf("=========================================\n");
+
+    printf("\nFrame Size : %d Bits\n",frameSize);
+
+    printf("Total Frames : %d\n\n",frameCount);
+
+    for(i=0;i<frameCount;i++)
+    {
+        if(framePacketNumber[i]!=currentPacket)
+        {
+            currentPacket=framePacketNumber[i];
+
+            printf("-----------------------------------------\n");
+            printf("PACKET %d\n",currentPacket);
+            printf("-----------------------------------------\n");
+        }
+
+        printf("Frame %d : %s\n",i+1,frames[i]);
+    }
+}
+
+void ipToBinary()
+{
+    char temp[30];
+    char *token;
+    char oneByte[9];
+
+    int number;
+
+    sourceIPBinary[0]='\0';
+    destinationIPBinary[0]='\0';
+
+    /* Source IP */
+
+    strcpy(temp,hosts[sourceIndex].ip);
+
+    token=strtok(temp,".");
+
+    while(token!=NULL)
+    {
+        number=atoi(token);
+
+        charToBinary((unsigned char)number,oneByte);
+
+        strcat(sourceIPBinary,oneByte);
+        strcat(sourceIPBinary," ");
+
+        token=strtok(NULL,".");
+    }
+
+    /* Destination IP */
+
+    strcpy(temp,hosts[destinationIndex].ip);
+
+    token=strtok(temp,".");
+
+    while(token!=NULL)
+    {
+        number=atoi(token);
+
+        charToBinary((unsigned char)number,oneByte);
+
+        strcat(destinationIPBinary,oneByte);
+        strcat(destinationIPBinary," ");
+
+        token=strtok(NULL,".");
+    }
+}
+
+/********************************************************************
+                CONVERT MAC ADDRESS TO BINARY
+********************************************************************/
+
+void macToBinary()
+{
+    char temp[30];
+    char *token;
+    char oneByte[9];
+
+    int number;
+
+    sourceMACBinary[0]='\0';
+    destinationMACBinary[0]='\0';
+
+    /* Source MAC */
+
+    strcpy(temp,hosts[sourceIndex].mac);
+
+    token=strtok(temp,":");
+
+    while(token!=NULL)
+    {
+        number=(int)strtol(token,NULL,16);
+
+        charToBinary((unsigned char)number,oneByte);
+
+        strcat(sourceMACBinary,oneByte);
+        strcat(sourceMACBinary," ");
+
+        token=strtok(NULL,":");
+    }
+
+    /* Destination MAC */
+
+    strcpy(temp,hosts[destinationIndex].mac);
+
+    token=strtok(temp,":");
+
+    while(token!=NULL)
+    {
+        number=(int)strtol(token,NULL,16);
+
+        charToBinary((unsigned char)number,oneByte);
+
+        strcat(destinationMACBinary,oneByte);
+        strcat(destinationMACBinary," ");
+
+        token=strtok(NULL,":");
+    }
+}
+void printPPPFrame(char payload[],char checksum[])
+{
+    printf("01111110 ");
+    printf("%s ",addressField);
+    printf("%s ",controlField);
+    printf("%s ",protocolBinary);
+    printf("%s ",payload);
+    printf("%s ",checksum);
+    printf("01111110\n");
+}
+void byteStuffing()
+{
+    int i,j;
+    char byte[9];
+
+    printf("\n");
+    printf("====================================================\n");
+    printf("BYTE STUFFING\n");
+    printf("====================================================\n");
+
+    for(i=0;i<frameCount;i++)
+    {
+        stuffedFrames[i][0]='\0';
+
+        /* Stuff only payload */
+
+        for(j=0;j<strlen(frames[i]);j+=8)
+        {
+            strncpy(byte,&frames[i][j],8);
+
+            byte[8]='\0';
+
+            if(strcmp(byte,"01111110")==0 ||
+               strcmp(byte,"01111101")==0)
+            {
+                strcat(stuffedFrames[i],"01111101");
+            }
+
+            strcat(stuffedFrames[i],byte);
+        }
+
+        printf("\nFrame %d\n",i+1);
+
+        printf("-----------------------------------------\n");
+
+        printf("Original PPP Frame\n\n");
+
+        printPPPFrame(frames[i],frameChecksum[i]);
+
+        printf("\n");
+
+        printf("Stuffed PPP Frame\n\n");
+
+        printPPPFrame(stuffedFrames[i],frameChecksum[i]);
+
+        printf("\n");
+    }
+}
+void byteDestuffing()
+{
+    int i,j;
+    int valid;
+    char choice;
+    char byte[9];
+
+    printf("\n");
+    printf("=========================================\n");
+    printf("          BYTE DESTUFFING\n");
+    printf("=========================================\n");
+
+    for(i=0;i<frameCount;i++)
+    {
+        destuffedFrames[i][0]='\0';
+
+        for(j=0;j<strlen(stuffedFrames[i]);j+=8)
+        {
+            strncpy(byte,&stuffedFrames[i][j],8);
+            byte[8]='\0';
+
+            /* Skip ESC byte */
+            if(strcmp(byte,"01111101")==0)
+            {
+                j += 8;
+
+                strncpy(byte,&stuffedFrames[i][j],8);
+                byte[8]='\0';
+            }
+
+            strcat(destuffedFrames[i],byte);
+        }
+
+        printf("\nFrame %d\n",i+1);
+
+        printf("Destuffed Data : %s\n",destuffedFrames[i]);
+
+        printf("\nPPP Frame After Byte Destuffing\n\n");
+
+        printPPPFrame(destuffedFrames[i],frameChecksum[i]);
+
+        /* Build complete receiver frame */
+        buildReceiverFrame(i);
+
+        printf("\nDo you want to introduce transmission error? (Y/N): ");
+        scanf(" %c",&choice);
+
+        if(choice=='Y' || choice=='y')
+        {
+            modifyFrameBits(i);
+
+            /* Extract modified fields */
+            extractReceiverFields(i);
+        }
+
+        printf("\n=========================================\n");
+        printf("VERIFYING RECEIVED FRAME\n");
+        printf("=========================================\n");
+                receiverByteStuffing(i);
+
+                valid = verifyChecksum(receiverStuffedFrames[i],
+                       frameChecksum[i]);
+
+        printf("\nOriginal Message:\n");
+        printf("01111110 ");
+        printf("11111111 ");
+        printf("00000011 ");
+        printf("%s ",protocolBinary);
+        printf("%c ",binaryToChar(destuffedFrames[i]));
+        printf("%s ",frameChecksum[i]);
+        printf("01111110\n");
+
+        printf("\n");
+    }
+
+    printOriginalMessage();
+
+    receiverProtocol();
+
+    writeByteOutputToFile();
+
+    printf("\n");
+}
+void printOriginalMessage()
+{
+    int i;
+    char ch;
+
+    printf("\n=========================================\n");
+    printf("ORIGINAL MESSAGE AFTER BYTE DESTUFFING\n");
+    printf("=========================================\n\n");
+
+    for(i = 0; i < frameCount; i++)
+    {
+        ch = binaryToChar(destuffedFrames[i]);
+
+        /* Ignore padding or null characters */
+        if(ch != '\0')
+            printf("%c", ch);
+    }
+
+    printf("\n");
+}
+char binaryToChar(char binary[])
+{
+    int i, value = 0;
+
+    for(i = 0; i < 8; i++)
+    {
+        value = value * 2 + (binary[i] - '0');
+    }
+
+    return (char)value;
+}
+void applicationLayer()
+{
+    int len;
+
+    printf("\n");
+    printf("=====================================================\n");
+    printf("                APPLICATION LAYER\n");
+    printf("=====================================================\n");
+
+    printf("\nOriginal Message\n\n");
+
+    printf("%s",message);
+
+    len=strlen(message);
+
+    if(len>0 && message[len-1]=='\n')
+    {
+        len--;
+    }
+
+    printf("\nCharacters : %d\n",len);
+}
+
+
+/********************************************************************
+                    TRANSPORT LAYER
+********************************************************************/
+
+void transportLayer()
+{
+    int i;
+
+    printf("\n");
+    printf("=====================================================\n");
+    printf("                 TRANSPORT LAYER\n");
+    printf("=====================================================\n");
+
+    printf("\nBinary Message\n\n");
+
+    printf("%s\n",binaryMessage);
+        printf("\n");
+        printf("Source Port Number : %d\n",sourcePort);
+
+        printf("Destination Port Number : %d\n",destinationPort);
+
+        printf("\nSource Port (Binary)\n");
+        printf("%s\n",sourcePortBinary);
+
+        printf("\nDestination Port (Binary)\n");
+        printf("%s\n",destinationPortBinary);
+
+    printf("\nBinary Length : %d Bits\n",(int)strlen(binaryMessage));
+
+    printf("\nPacket Size : %d Bits\n",packetSize);
+
+    printf("Total Packets : %d\n\n",packetCount);
+
+    for(i=0;i<packetCount;i++)
+    {
+        printf("-----------------------------------------\n");
+        printf("Packet %d\n",i+1);
+        printf("-----------------------------------------\n");
+        printf("%s\n",packets[i]);
+        printf("\n");
+    }
+}
+
+/********************************************************************
+                    NETWORK LAYER
+********************************************************************/
+
+void networkLayer()
+{
+    printf("\n");
+    printf("=====================================================\n");
+    printf("                  NETWORK LAYER\n");
+    printf("=====================================================\n");
+
+    printf("\nSource URL\n");
+    printf("%s\n",hosts[sourceIndex].url);
+
+    printf("\nDestination URL\n");
+    printf("%s\n",hosts[destinationIndex].url);
+
+    printf("\nSource IP\n");
+    printf("%s\n",hosts[sourceIndex].ip);
+
+    printf("\nDestination IP\n");
+    printf("%s\n",hosts[destinationIndex].ip);
+
+    printf("\nSource IP (Binary)\n");
+    printf("%s\n",sourceIPBinary);
+
+    printf("\nDestination IP (Binary)\n");
+    printf("%s\n",destinationIPBinary);
+}
+
+/********************************************************************
+                    DATA LINK LAYER
+********************************************************************/
+void dataLinkLayer()
+{
+    int i;
+    int currentPacket=0;
+
+    printf("\n");
+    printf("=====================================================\n");
+    printf("                DATA LINK LAYER\n");
+    printf("=====================================================\n");
+
+
+
+    byteStuffing();
+        calculateAllFrameChecksums();
+    byteDestuffing();
+
+    printf("\nFrame Size : %d Bits\n",frameSize);
+
+    printf("Total Frames : %d\n",frameCount);
+
+    printf("\nSource MAC\n");
+    printf("%s\n",hosts[sourceIndex].mac);
+
+    printf("\nDestination MAC\n");
+    printf("%s\n",hosts[destinationIndex].mac);
+
+    printf("\nSource MAC (Binary)\n");
+    printf("%s\n",sourceMACBinary);
+
+    printf("\nDestination MAC (Binary)\n");
+    printf("%s\n",destinationMACBinary);
+
+    printf("\n");
+
+
+
+    for(i=0;i<frameCount;i++)
+    {
+        if(framePacketNumber[i]!=currentPacket)
+        {
+            currentPacket=framePacketNumber[i];
+
+            printf("-----------------------------------------\n");
+            printf("PACKET %d\n",currentPacket);
+            printf("-----------------------------------------\n");
+        }
+
+        printf("\nFrame %d\n",i+1);
+
+        printf("Original Frame  : %s\n",frames[i]);
+
+        printf("Stuffed Frame   : %s\n",stuffedFrames[i]);
+
+        printf("Destuffed Frame : %s\n",destuffedFrames[i]);
+
+        printf("\n");
+    }
+
+}
+
+/********************************************************************
+                    PHYSICAL LAYER
+********************************************************************/
+
+void physicalLayer()
+{
+    printf("\n");
+    printf("=====================================================\n");
+    printf("                PHYSICAL LAYER\n");
+    printf("=====================================================\n");
+
+    printf("\nPacket Transmission Started...\n");
+
+    printf("\nPacket Size : %d Bits\n",packetSize);
+
+    printf("Frame Size : %d Bits\n",frameSize);
+
+    printf("Total Packets : %d\n",packetCount);
+
+    printf("Total Frames : %d\n",frameCount);
+
+    printf("\nFrames are Ready for Transmission...\n");
+}
+
+/********************************************************************
+                FINAL TRANSMISSION
+********************************************************************/
+/********************************************************************
+                FINAL TRANSMISSION
+********************************************************************/
+
+void printTransmission()
+{
+    int i;
+    int currentPacket=0;
+
+    printf("\n");
+    printf("=============================================================\n");
+    printf("             FINAL FRAME TRANSMISSION\n");
+    printf("=============================================================\n");
+
+    for(i=0;i<frameCount;i++)
+    {
+        if(framePacketNumber[i]!=currentPacket)
+        {
+            currentPacket=framePacketNumber[i];
+
+            printf("\n");
+            printf("#############################################################\n");
+            printf("                     PACKET %d\n",currentPacket);
+            printf("#############################################################\n");
+        }
+
+        printf("\n");
+        printf("---------------------- FRAME %d ----------------------\n",i+1);
+
+        printf("\nHEADER\n");
+
+        printf("\nSource URL\n");
+        printf("%s\n",hosts[sourceIndex].url);
+
+        printf("\nDestination URL\n");
+        printf("%s\n",hosts[destinationIndex].url);
+
+        printf("\nSource IP\n");
+        printf("%s\n",hosts[sourceIndex].ip);
+
+        printf("\nDestination IP\n");
+        printf("%s\n",hosts[destinationIndex].ip);
+
+        printf("\nSource MAC\n");
+        printf("%s\n",hosts[sourceIndex].mac);
+
+        printf("\nDestination MAC\n");
+        printf("%s\n",hosts[destinationIndex].mac);
+
+        printf("\nSource IP (Binary)\n");
+        printf("%s\n",sourceIPBinary);
+
+        printf("\nDestination IP (Binary)\n");
+        printf("%s\n",destinationIPBinary);
+
+        printf("\nSource MAC (Binary)\n");
+        printf("%s\n",sourceMACBinary);
+
+        printf("\nDestination MAC (Binary)\n");
+        printf("%s\n",destinationMACBinary);
+
+        printf("\nPacket Number\n");
+        printf("%d\n",framePacketNumber[i]);
+
+                printf("\nPPP Frame Ready for Transmission\n\n");
+
+                printPPPFrame(stuffedFrames[i],frameChecksum[i]);
+
+        printf("\nTrailer\n");
+        printf("00000000\n");
+
+        printf("\n------------------------------------------------------\n");
+    }
+
+    printf("\n=============================================================\n");
+    printf("      ALL FRAMES TRANSMITTED SUCCESSFULLY\n");
+    printf("=============================================================\n");
+}
+void printAll()
+{
+        int i;
+    int currentPacket=0;
+
+    printf("\n");
+    printf("=============================================================\n");
+    printf("             FINAL FRAME TRANSMISSION\n");
+    printf("=============================================================\n");
+
+    for(i=0;i<frameCount;i++)
+    {
+        if(framePacketNumber[i]!=currentPacket)
+        {
+            currentPacket=framePacketNumber[i];
+
+            printf("\n");
+            printf("#############################################################\n");
+            printf("                     PACKET %d\n",currentPacket);
+            printf("#############################################################\n");
+        }
+                printf("\nPacket Number\n");
+        printf("%d\n",framePacketNumber[i]);
+
+        printf("\n");
+        printf("---------------------- FRAME %d ----------------------\n",i+1);
+
+
+
+
+        printf("%s\t",sourceIPBinary);
+
+
+        printf("%s\t",destinationIPBinary);
+
+
+        printf("%s\t",sourceMACBinary);
+
+
+        printf("%s\t",destinationMACBinary);
+
+                printf("%s\n",sourcePortBinary);
+
+        printf("%s\n",destinationPortBinary);
+
+
+        printf("%s\t",frames[i]);
+
+
+        printf("00000000\n");
+
+        printf("\n------------------------------------------------------\n");
+    }
+
+    printf("\n=============================================================\n");
+    printf("      ALL FRAMES TRANSMITTED SUCCESSFULLY\n");
+    printf("=============================================================\n");
+}
