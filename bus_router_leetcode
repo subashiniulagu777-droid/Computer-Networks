@@ -1,0 +1,88 @@
+#include <stdlib.h>
+#include <string.h>
+
+int numBusesToDestination(int** routes, int routesSize, int* routesColSize, int source, int target) {
+  
+    if (source == target) return 0;
+
+    int max_stop = source > target ? source : target;
+    for (int i = 0; i < routesSize; i++) {
+        for (int j = 0; j < routesColSize[i]; j++) {
+            if (routes[i][j] > max_stop) {
+                max_stop = routes[i][j];
+            }
+        }
+    }
+    int* stop_counts = (int*)calloc(max_stop + 1, sizeof(int));
+    for (int i = 0; i < routesSize; i++) {
+        for (int j = 0; j < routesColSize[i]; j++) {
+            stop_counts[routes[i][j]]++;
+        }
+    }
+
+    int* stop_offsets = (int*)malloc((max_stop + 2) * sizeof(int));
+    stop_offsets[0] = 0;
+    for (int i = 0; i <= max_stop; i++) {
+        stop_offsets[i + 1] = stop_offsets[i] + stop_counts[i];
+    }
+
+    int total_elements = stop_offsets[max_stop + 1];
+    int* stop_to_routes = (int*)malloc(total_elements * sizeof(int));
+    int* temp_offsets = (int*)malloc((max_stop + 1) * sizeof(int));
+    memcpy(temp_offsets, stop_offsets, (max_stop + 1) * sizeof(int));
+
+    for (int i = 0; i < routesSize; i++) {
+        for (int j = 0; j < routesColSize[i]; j++) {
+            int stop = routes[i][j];
+            stop_to_routes[temp_offsets[stop]++] = i;
+        }
+    }
+
+    int* queue = (int*)malloc((max_stop + 1) * sizeof(int));
+    int head = 0, tail = 0;
+
+    char* visited_stops = (char*)calloc(max_stop + 1, sizeof(char));
+    char* visited_routes = (char*)calloc(routesSize, sizeof(char));
+    queue[tail++] = source;
+    visited_stops[source] = 1;
+
+    int buses_taken = 0;
+
+    while (head < tail) {
+        int level_size = tail - head;
+        
+        for (int k = 0; k < level_size; k++) {
+            int curr_stop = queue[head++];
+            
+            int start_idx = stop_offsets[curr_stop];
+            int end_idx = stop_offsets[curr_stop + 1];
+            
+            for (int idx = start_idx; idx < end_idx; idx++) {
+                int route_id = stop_to_routes[idx];
+                
+                if (visited_routes[route_id]) continue;
+                visited_routes[route_id] = 1;
+                
+                for (int j = 0; j < routesColSize[route_id]; j++) {
+                    int next_stop = routes[route_id][j];
+                    
+                    if (next_stop == target) {
+                        free(stop_counts); free(stop_offsets); free(stop_to_routes);
+                        free(temp_offsets); free(queue); free(visited_stops); free(visited_routes);
+                        return buses_taken + 1;
+                    }
+                    
+                    if (!visited_stops[next_stop]) {
+                        visited_stops[next_stop] = 1;
+                        queue[tail++] = next_stop;
+                    }
+                }
+            }
+        }
+        buses_taken++;
+    }
+    free(stop_counts); free(stop_offsets); free(stop_to_routes);
+    free(temp_offsets); free(queue); free(visited_stops); free(visited_routes);
+
+    return -1;
+}
