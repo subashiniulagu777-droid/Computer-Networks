@@ -1,0 +1,146 @@
+#include <stdlib.h>
+#include <math.h>
+#include <limits.h>
+
+// Structure to represent a node in the min-priority queue
+typedef struct {
+    int row;
+    int col;
+    int effort;
+} Node;
+
+// Structure for the Min-Heap / Priority Queue
+typedef struct {
+    Node* data;
+    int size;
+    int capacity;
+} MinHeap;
+
+// Helper function to create a min-heap
+MinHeap* createMinHeap(int capacity) {
+    MinHeap* heap = (MinHeap*)malloc(sizeof(MinHeap));
+    heap->data = (Node*)malloc(capacity * sizeof(Node));
+    heap->size = 0;
+    heap->capacity = capacity;
+    return heap;
+}
+
+// Helper function to swap two heap nodes
+void swap(Node* a, Node* b) {
+    Node temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+// Function to push a node into the min-heap
+void push(MinHeap* heap, int row, int col, int effort) {
+    if (heap->size == heap->capacity) return;
+    
+    int i = heap->size++;
+    heap->data[i].row = row;
+    heap->data[i].col = col;
+    heap->data[i].effort = effort;
+    
+    // Bubble up
+    while (i != 0 && heap->data[i].effort < heap->data[(i - 1) / 2].effort) {
+        swap(&heap->data[i], &heap->data[(i - 1) / 2]);
+        i = (i - 1) / 2;
+    }
+}
+
+// Function to pop the node with the minimum effort from the heap
+Node pop(MinHeap* heap) {
+    Node root = heap->data[0];
+    heap->data[0] = heap->data[--heap->size];
+    
+    // Bubble down
+    int i = 0;
+    while (2 * i + 1 < heap->size) {
+        int left = 2 * i + 1;
+        int right = 2 * i + 2;
+        int smallest = left;
+        
+        if (right < heap->size && heap->data[right].effort < heap->data[left].effort) {
+            smallest = right;
+        }
+        
+        if (heap->data[i].effort <= heap->data[smallest].effort) {
+            break;
+        }
+        
+        swap(&heap->data[i], &heap->data[smallest]);
+        i = smallest;
+    }
+    return root;
+}
+
+// Main function solving the problem
+int minimumEffortPath(int** heights, int heightsSize, int* heightsColSize) {
+    int rows = heightsSize;
+    int cols = heightsColSize[0];
+    
+    // 2D grid to keep track of the minimum effort seen so far for each cell
+    int** maxEffort = (int**)malloc(rows * sizeof(int*));
+    for (int i = 0; i < rows; i++) {
+        maxEffort[i] = (int*)malloc(cols * sizeof(int));
+        for (int j = 0; j < cols; j++) {
+            maxEffort[i][j] = INT_MAX;
+        }
+    }
+    
+    // Set initial position effort to 0
+    maxEffort[0][0] = 0;
+    
+    // Initialize priority queue
+    MinHeap* pq = createMinHeap(rows * cols * 4);
+    push(pq, 0, 0, 0);
+    
+    // Direction vectors for moving: Up, Right, Down, Left
+    int dr[] = {-1, 0, 1, 0};
+    int dc[] = {0, 1, 0, -1};
+    
+    while (pq->size > 0) {
+        Node curr = pop(pq);
+        int r = curr.row;
+        int c = curr.col;
+        int currentEffort = curr.effort;
+        
+        // If we reached the bottom-right corner, return the minimum effort
+        if (r == rows - 1 && c == cols - 1) {
+            // Cleanup memory before returning
+            for (int i = 0; i < rows; i++) free(maxEffort[i]);
+            free(maxEffort);
+            free(pq->data);
+            free(pq);
+            return currentEffort;
+        }
+        
+        // Skip processing if a better route to this cell has already been discovered
+        if (currentEffort > maxEffort[r][c]) {
+            continue;
+        }
+        
+        // Explore 4-directional neighboring cells
+        for (int i = 0; i < 4; i++) {
+            int nr = r + dr[i];
+            int nc = c + dc[i];
+            
+            // Check boundary limits
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                // The new effort is the maximum bottleneck on this specific pathway
+                int newEffort = abs(heights[r][c] - heights[nr][nc]);
+                if (currentEffort > newEffort) {
+                    newEffort = currentEffort;
+                }
+                
+                // Relaxation step
+                if (newEffort < maxEffort[nr][nc]) {
+                    maxEffort[nr][nc] = newEffort;
+                    push(pq, nr, nc, newEffort);
+                }
+            }
+        }
+    }
+    
+    return 0; 
+}
