@@ -1,0 +1,89 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 8558
+#define BUFFER_SIZE 1024
+
+/* Shared structure for standard communication */
+struct Message
+{
+    char data[BUFFER_SIZE];
+};
+
+int main()
+{
+    int client_socket;
+    struct sockaddr_in server_addr;
+    struct Message message;
+
+    /* Create UDP socket */
+    client_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (client_socket < 0)
+    {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    /* Server address config */
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    printf("====================================\n");
+    printf("          UDP CLIENT\n");
+    printf("====================================\n");
+    printf("Connected to server on port %d.\n", PORT);
+
+    /* Client loop: Gets keyboard input, sends to server, receives echo back */
+    while (1)
+    {
+        /* 1. Get string input from the user keyboard */
+        printf("\nEnter string to send: ");
+        fgets(message.data, BUFFER_SIZE, stdin);
+
+        /* Remove trailing newline character */
+        message.data[strcspn(message.data, "\n")] = '\0';
+
+        /* 2. Send the structure containing input to the server */
+        sendto(client_socket,
+               (char *)&message,
+               sizeof(message),
+               0,
+               (struct sockaddr *)&server_addr,
+               sizeof(server_addr));
+
+        printf("[SENT] Data transmitted to server.\n");
+
+        /* 3. Wait and receive the structure back from the server */
+        socklen_t server_len = sizeof(server_addr);
+        int n = recvfrom(client_socket,
+                         (char *)&message,
+                         sizeof(message),
+                         0,
+                         (struct sockaddr *)&server_addr,
+                         &server_len);
+
+        if (n < 0)
+        {
+            perror("Error receiving message from server");
+            break;
+        }
+
+        /* 4. Display the returned string */
+        printf("[RECEIVED] Server echoed: %s\n", message.data);
+
+        /* Stop condition check */
+        if (strcmp(message.data, "exit") == 0)
+        {
+            printf("Exit signal processed. Stopping client.\n");
+            break;
+        }
+    }
+
+    close(client_socket);
+    return 0;
+}
