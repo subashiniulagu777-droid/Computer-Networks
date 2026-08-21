@@ -1,0 +1,126 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+#define PORT 8558
+#define BUFFER_SIZE 1024
+
+struct Packet
+{
+    char data[BUFFER_SIZE];
+    unsigned int checksum;
+};
+
+unsigned int calculateChecksum(char data[])
+{
+    unsigned int sum = 0;
+    int i;
+
+    for (i = 0; data[i] != '\0'; i++)
+    {
+        sum += (unsigned char)data[i];
+    }
+
+    return (~sum) & 0xFF;
+}
+
+int main()
+{
+    int server_socket;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    struct Packet packet;
+    unsigned int calculated_checksum;
+
+    /* Create UDP socket */
+    server_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server_socket < 0)
+    {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    /* Enable port reuse to easily restart server during lab sessions */
+    int opt = 1;
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    /* Configure Server address */
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+
+    /* Bind socket */
+    if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("Bind failed");
+        close(server_socket);
+        return 1;
+    }
+
+    printf("====================================\n");
+    printf("       UDP CHECKSUM SERVER\n");
+    printf("====================================\n");
+    printf("Server started on port %d\n", PORT);
+    printf("Listening for remote packets across ethernet network...\n");
+
+    while (1)
+    {
+        printf("\nWaiting for data from client...\n");
+
+        /* Receive Packet structure */
+        int n = recvfrom(server_socket,
+                         (char *)&packet,
+                         sizeof(packet),
+                         0,
+                         (struct sockaddr *)&client_addr,
+                         &client_len);
+
+        if (n < 0)
+        {
+            perror("ERROR: recvfrom failed");
+            break;
+        }
+
+        /* Check for exit */
+        if (strcmp(packet.data, "exit") == 0)
+        {
+            printf("\nClient closed communication. Shutting down server.\n");
+            break;
+        }
+
+        /* 1. Extract sender info */
+        char client_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
+        printf("Packet successfully received from host: %s\n", client_ip);
+
+        /* 2. Recalculate checksum on received string data */
+        calculated_checksum = calculateChecksum(packet.data);
+
+        /* 3. Output checksum verification details */
+        printf("\n====================================\n");
+        printf("       CHECKSUM VERIFICATION\n");
+        printf("====================================\n");
+        printf("Received Data       : %s\n", packet.data);
+        printf("Received Checksum   : %02X\n", packet.checksum);
+        printf("Calculated Checksum : %02X\n", calculated_checksum);
+        printf("------------------------------------\n");
+
+        if (packet.checksum == calculated_checksum)
+        {
+            printf("STATUS : NO ERROR\n");
+            printf("Checksum verification successful.\n");
+        }
+        else
+        {
+            printf("STATUS : ERROR DETECTED\n");
+            printf("Checksum verification failed.\n");
+        }
+        printf("====================================\n");
+    }
+
+    close(server_socket);
+    return 0;
+}
