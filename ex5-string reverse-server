@@ -1,0 +1,112 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+#define PORT 8558
+#define BUFFER_SIZE 1024
+
+/* Structure to store the message */
+struct Packet
+{
+    char data[BUFFER_SIZE];
+    int length;
+};
+
+int main()
+{
+    int server_socket;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    struct Packet packet;
+    int i;
+    char temp;
+
+    /* Create UDP socket */
+    server_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server_socket < 0)
+    {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    /* Enable port reuse to avoid bind issues */
+    int opt = 1;
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    /* Server address config */
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+
+    /* Bind socket */
+    if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("Bind failed");
+        close(server_socket);
+        return 1;
+    }
+
+    printf("====================================\n");
+    printf("     UDP STRING REVERSE SERVER\n");
+    printf("====================================\n");
+    printf("Server started on port %d\n", PORT);
+    printf("Waiting for data from client...\n");
+
+    /* Server continuously processes incoming packets */
+    while (1)
+    {
+        int n = recvfrom(server_socket,
+                         (char *)&packet,
+                         sizeof(packet),
+                         0,
+                         (struct sockaddr *)&client_addr,
+                         &client_len);
+
+        if (n < 0)
+        {
+            perror("Error receiving from client");
+            break;
+        }
+
+        printf("\nReceived string: %s\n", packet.data);
+
+        /* Exit condition check */
+        if (strcmp(packet.data, "exit") == 0)
+        {
+            /* Echo the exit packet back to let the client shut down smoothly */
+            sendto(server_socket, (char *)&packet, sizeof(packet), 0, (struct sockaddr *)&client_addr, client_len);
+            printf("Exit signal received. Server shutting down.\n");
+            break;
+        }
+
+        /* Calculate and record the length */
+        packet.length = strlen(packet.data);
+
+        /* Reverse the string in-place inside the struct buffer */
+        for (i = 0; i < packet.length / 2; i++)
+        {
+            temp = packet.data[i];
+            packet.data[i] = packet.data[packet.length - 1 - i];
+            packet.data[packet.length - 1 - i] = temp;
+        }
+
+        printf("Processed length: %d\n", packet.length);
+        printf("Reversed output : %s\n", packet.data);
+
+        /* Send the modified structure back to the client */
+        sendto(server_socket,
+               (char *)&packet,
+               sizeof(packet),
+               0,
+               (struct sockaddr *)&client_addr,
+               client_len);
+
+        printf("Response packet sent to client.\n");
+    }
+
+    close(server_socket);
+    return 0;
+}
