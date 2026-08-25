@@ -1,0 +1,122 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+#define PORT 8558
+#define BUFFER_SIZE 1024
+
+struct Packet
+{
+    char data[BUFFER_SIZE];
+    unsigned int checksum;
+};
+
+unsigned int calculateChecksum(char data[])
+{
+    unsigned int sum = 0;
+    int i;
+
+    for (i = 0; data[i] != '\0'; i++)
+    {
+        sum += (unsigned char)data[i];
+    }
+
+    return (~sum) & 0xFF;
+}
+
+int main(int argc, char *argv[])
+{
+    int client_socket;
+    struct sockaddr_in server_addr;
+    struct Packet packet;
+    int choice, pos;
+
+    if (argc != 2)
+    {
+        printf("Usage: %s <Server_IP_Address>\n", argv[0]);
+        printf("Example: %s 192.168.1.50\n", argv[0]);
+        return 1;
+    }
+
+    /* Create UDP socket */
+    client_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (client_socket < 0)
+    {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    /* Configure Server address from command-line argument */
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr(argv[1]);
+
+    printf("====================================\n");
+    printf("       UDP CHECKSUM CLIENT\n");
+    printf("====================================\n");
+    printf("Targeting Server IP: %s on Port: %d\n", argv[1], PORT);
+
+    while (1)
+    {
+        printf("\nEnter string to send: ");
+        fgets(packet.data, BUFFER_SIZE, stdin);
+        packet.data[strcspn(packet.data, "\n")] = '\0';
+
+        /* 1. Calculate original checksum */
+        packet.checksum = calculateChecksum(packet.data);
+
+        /* 2. Check for exit */
+        if (strcmp(packet.data, "exit") == 0)
+        {
+            sendto(client_socket, (char *)&packet, sizeof(packet), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+            printf("Exit signal sent. Stopping client.\n");
+            break;
+        }
+
+        /* 3. Prompt for error insertion */
+        printf("Do you want to insert an error? (1 = Yes, 0 = No): ");
+        scanf("%d", &choice);
+        getchar(); // Clear newline buffer
+
+        if (choice == 1)
+        {
+            int length = strlen(packet.data);
+            if (length > 0)
+            {
+                printf("Enter position to corrupt (0 to %d): ", length - 1);
+                scanf("%d", &pos);
+                getchar(); // Clear newline buffer
+
+                if (pos >= 0 && pos < length)
+                {
+                    packet.data[pos] = packet.data[pos] + 1; // Corrupt character
+                    printf("Error intentionally introduced at index %d.\n", pos);
+                }
+                else
+                {
+                    printf("Invalid index! Sending uncorrupted data.\n");
+                }
+            }
+            else
+            {
+                printf("String is empty! Cannot corrupt.\n");
+            }
+        }
+
+        /* 4. Send Packet structure to server */
+        sendto(client_socket,
+               (char *)&packet,
+               sizeof(packet),
+               0,
+               (struct sockaddr *)&server_addr,
+               sizeof(server_addr));
+
+        printf("Packet transmitted to server.\n");
+    }
+
+    close(client_socket);
+    return 0;
+}
