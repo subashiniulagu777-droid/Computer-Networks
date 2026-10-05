@@ -1,0 +1,704 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#define PORT 5000
+#define BUFFER_SIZE 1024
+#define MAX_ENTRIES 100
+#define MAX_CLIENTS 5
+
+
+/* ==============================
+   ARP ENTRY
+   ============================== */
+
+struct ARPEntry
+{
+    char ip[16];
+    char mac[18];
+};
+
+
+/* ==============================
+   SHARED ARP TABLE
+   ============================== */
+
+struct SharedARPTable
+{
+    struct ARPEntry entries[MAX_ENTRIES];
+    int count;
+};
+
+
+/* ==============================
+   CLIENT DATA
+   ============================== */
+
+struct ClientData
+{
+    int client_socket;
+    int client_id;
+};
+
+
+/* ==============================
+   GLOBAL VARIABLES
+   ============================== */
+
+struct SharedARPTable shared_table;
+
+pthread_mutex_t table_mutex =
+    PTHREAD_MUTEX_INITIALIZER;
+
+
+/* =========================================================
+   CLIENT THREAD FUNCTION
+   ========================================================= */
+
+void *client_handler(void *arg)
+{
+    struct ClientData *client_data;
+
+    client_data =
+        (struct ClientData *)arg;
+
+    int client_socket =
+        client_data->client_socket;
+
+    int client_id =
+        client_data->client_id;
+
+    free(client_data);
+
+    char buffer[BUFFER_SIZE];
+
+    memset(buffer, 0, sizeof(buffer));
+
+
+    /* ==========================================
+       RECEIVE IP ADDRESS
+       ========================================== */
+
+    int valread;
+
+    valread =
+        recv(client_socket,
+             buffer,
+             BUFFER_SIZE - 1,
+             0);
+
+
+    if (valread <= 0)
+    {
+        printf("[Client%d] Connection closed.\n",
+               client_id);
+
+        close(client_socket);
+
+        return NULL;
+    }
+
+
+    buffer[valread] = '\0';
+
+
+    /* Remove newline */
+
+    buffer[strcspn(buffer, "\n\r")] = '\0';
+
+
+    printf("\n[Client%d - Thread %lu] Searching MAC for IP: %s\n",
+           client_id,
+           (unsigned long)pthread_self(),
+           buffer);
+
+
+    /* ==========================================
+       SEARCH ARP TABLE
+       ========================================== */
+
+    int found_index = -1;
+
+
+    /* Lock shared ARP table */
+
+    pthread_mutex_lock(&table_mutex);
+
+    int i;
+    for ( i = 0;
+         i < shared_table.count;
+         i++)
+    {
+        if (strcmp(shared_table.entries[i].ip,
+                   buffer) == 0)
+        {
+            found_index = i;
+
+            break;
+        }
+    }
+
+
+    /* ==========================================
+       IP FOUND
+       ========================================== */
+
+    if (found_index != -1)
+    {
+        printf("[Client%d] IP Found!\n",
+               client_id);
+
+        printf("[Client%d] MAC Address = %s\n",
+               client_id,
+               shared_table.entries[found_index].mac);
+
+
+        char response[BUFFER_SIZE];
+
+
+        snprintf(response,
+                 sizeof(response),
+                 "FOUND:%s",
+                 shared_table.entries[found_index].mac);
+
+
+        /* Unlock table */
+
+        pthread_mutex_unlock(&table_mutex);
+
+
+        /* Send MAC address */
+
+        send(client_socket,
+             response,
+             strlen(response),
+             0);
+    }
+
+
+    /* ==========================================
+       IP NOT FOUND
+       ========================================== */
+
+    else
+    {
+        printf("[Client%d] IP not found.\n",
+               client_id);
+
+        printf("[Client%d] Notifying client...\n",
+               client_id);
+
+
+        /* Unlock table */
+
+        pthread_mutex_unlock(&table_mutex);
+
+
+        /* Tell client */
+
+        send(client_socket,
+             "NOT_FOUND",
+             strlen("NOT_FOUND"),
+             0);
+
+
+        /*
+           Wait for client decision.
+
+           Client sends:
+
+           ADD:IP:MAC
+
+           Example:
+
+           ADD:192.168.1.10:AA:BB:CC:DD:EE:FF
+        */
+
+
+        memset(buffer,
+               0,
+               sizeof(buffer));
+
+
+        valread =
+            recv(client_socket,
+                 buffer,
+                 BUFFER_SIZE - 1,
+                 0);
+
+
+        if (valread > 0)
+        {
+            buffer[valread] = '\0';
+
+
+            /* ======================================
+               CHECK ADD REQUEST
+               ====================================== */
+
+            if (strncmp(buffer,
+                        "ADD:",
+                        4) == 0)
+            {
+                char new_ip[16];
+
+                char new_mac[18];
+
+
+                memset(new_ip,
+                       0,
+                       sizeof(new_ip));
+
+                memset(new_mac,
+                       0,
+                       sizeof(new_mac));
+
+
+                /*
+                   Extract IP and MAC
+                */
+
+                sscanf(buffer + 4,
+                       "%15[^:]:%17s",
+                       new_ip,
+                       new_mac);
+
+
+                /* ==================================
+                   LOCK TABLE
+                   ================================== */
+
+                pthread_mutex_lock(&table_mutex);
+
+
+                /* ==================================
+                   ADD NEW ENTRY
+                   ================================== */
+
+                if (shared_table.count < MAX_ENTRIES)
+                {
+                    strcpy(shared_table
+                           .entries[shared_table.count].ip,
+                           new_ip);
+
+
+                    strcpy(shared_table
+                           .entries[shared_table.count].mac,
+                           new_mac);
+
+
+                    shared_table.count++;
+
+
+                    printf("\n[Client%d] New ARP Entry Added!\n",
+                           client_id);
+
+                    printf("[Client%d] IP  = %s\n",
+                           client_id,
+                           new_ip);
+
+                    printf("[Client%d] MAC = %s\n",
+                           client_id,
+                           new_mac);
+
+
+                    /* Unlock */
+
+                    pthread_mutex_unlock(&table_mutex);
+
+
+                    /* Inform client */
+
+                    send(client_socket,
+                         "ADDED_SUCCESSFULLY",
+                         strlen("ADDED_SUCCESSFULLY"),
+                         0);
+                }
+
+                else
+                {
+                    /* Table full */
+
+                    pthread_mutex_unlock(&table_mutex);
+
+
+                    send(client_socket,
+                         "TABLE_FULL",
+                         strlen("TABLE_FULL"),
+                         0);
+                }
+            }
+        }
+    }
+
+
+    /* ==========================================
+       CLOSE CLIENT CONNECTION
+       ========================================== */
+
+    printf("[Client%d] Disconnected.\n",
+           client_id);
+
+
+    close(client_socket);
+
+
+    return NULL;
+}
+
+
+/* =========================================================
+   MAIN FUNCTION
+   ========================================================= */
+
+int main()
+{
+    int server_fd;
+    int new_socket;
+
+    struct sockaddr_in address;
+
+    socklen_t addrlen =
+        sizeof(address);
+
+    int opt = 1;
+
+
+    /* ==========================================
+       INITIALIZE SHARED ARP TABLE
+       ========================================== */
+
+    shared_table.count = 3;
+
+
+    /* Entry 1 */
+
+    strcpy(shared_table.entries[0].ip,
+           "192.168.1.1");
+
+    strcpy(shared_table.entries[0].mac,
+           "00:1A:2B:3C:4D:5E");
+
+
+    /* Entry 2 */
+
+    strcpy(shared_table.entries[1].ip,
+           "192.168.1.2");
+
+    strcpy(shared_table.entries[1].mac,
+           "00:1A:2B:3C:4D:5F");
+
+
+    /* Entry 3 */
+
+    strcpy(shared_table.entries[2].ip,
+           "192.168.1.3");
+
+    strcpy(shared_table.entries[2].mac,
+           "00:1A:2B:3C:4D:60");
+
+
+    /* ==========================================
+       CREATE SERVER SOCKET
+       ========================================== */
+
+    server_fd =
+        socket(AF_INET,
+               SOCK_STREAM,
+               0);
+
+
+    if (server_fd < 0)
+    {
+        perror("Socket creation failed");
+
+        return 1;
+    }
+
+
+    /* ==========================================
+       SOCKET OPTIONS
+       ========================================== */
+
+    setsockopt(server_fd,
+               SOL_SOCKET,
+               SO_REUSEADDR,
+               &opt,
+               sizeof(opt));
+
+
+    /* ==========================================
+       SERVER ADDRESS
+       ========================================== */
+
+    memset(&address,
+           0,
+           sizeof(address));
+
+
+    address.sin_family =
+        AF_INET;
+
+    address.sin_addr.s_addr =
+        INADDR_ANY;
+
+    address.sin_port =
+        htons(PORT);
+
+
+    /* ==========================================
+       BIND
+       ========================================== */
+
+    if (bind(server_fd,
+             (struct sockaddr *)&address,
+             sizeof(address)) < 0)
+    {
+        perror("Bind failed");
+
+        close(server_fd);
+
+        return 1;
+    }
+
+
+    /* ==========================================
+       LISTEN
+       ========================================== */
+
+    if (listen(server_fd,
+               MAX_CLIENTS) < 0)
+    {
+        perror("Listen failed");
+
+        close(server_fd);
+
+        return 1;
+    }
+
+
+    printf("\n========================================\n");
+    printf("       CONCURRENT ARP SERVER\n");
+    printf("========================================\n");
+
+    printf("Port            : %d\n",
+           PORT);
+
+    printf("Maximum Clients : %d\n",
+           MAX_CLIENTS);
+
+    printf("Waiting for clients...\n\n");
+
+
+    /* ==========================================
+       ACTIVE CLIENT TRACKING
+       ========================================== */
+
+    int client_active[MAX_CLIENTS] = {0};
+
+    int client_sockets[MAX_CLIENTS] = {0};
+
+
+    /* ==========================================
+       ACCEPT CLIENTS
+       ========================================== */
+
+    while (1)
+    {
+        new_socket =
+            accept(server_fd,
+                   (struct sockaddr *)&address,
+                   &addrlen);
+
+
+        if (new_socket < 0)
+        {
+            perror("Accept failed");
+
+            continue;
+        }
+
+
+        /* ======================================
+           FIND FREE CLIENT SLOT
+           ====================================== */
+
+        int free_slot = -1;
+
+        int i;
+        for ( i = 0;
+             i < MAX_CLIENTS;
+             i++)
+        {
+            if (client_active[i] == 0)
+            {
+                free_slot = i;
+
+                break;
+            }
+        }
+
+
+        /* ======================================
+           MAXIMUM 5 CLIENT CHECK
+           ====================================== */
+
+        if (free_slot == -1)
+        {
+            char full_message[] =
+                "Server full! Maximum 5 clients.";
+
+
+            send(new_socket,
+                 full_message,
+                 strlen(full_message),
+                 0);
+
+
+            printf("\nConnection rejected!\n");
+            printf("Maximum %d clients already connected.\n",
+                   MAX_CLIENTS);
+
+
+            close(new_socket);
+
+            continue;
+        }
+
+
+        /* ======================================
+           ASSIGN CLIENT ID
+           ====================================== */
+
+        int client_id =
+            free_slot + 1;
+
+
+        client_active[free_slot] =
+            1;
+
+        client_sockets[free_slot] =
+            new_socket;
+
+
+        printf("----------------------------------------\n");
+
+        printf("Client%d connected successfully!\n",
+               client_id);
+
+        printf("IP   : %s\n",
+               inet_ntoa(address.sin_addr));
+
+        printf("Port : %d\n",
+               ntohs(address.sin_port));
+
+        printf("Active clients: ");
+
+        int active_count = 0;
+
+        for ( i = 0;
+             i < MAX_CLIENTS;
+             i++)
+        {
+            if (client_active[i])
+            {
+                active_count++;
+            }
+        }
+
+        printf("%d / %d\n",
+               active_count,
+               MAX_CLIENTS);
+
+        printf("----------------------------------------\n");
+
+
+        /* ======================================
+           ALLOCATE CLIENT DATA
+           ====================================== */
+
+        struct ClientData *client_data;
+
+
+        client_data =
+            malloc(sizeof(struct ClientData));
+
+
+        if (client_data == NULL)
+        {
+            printf("Memory allocation failed!\n");
+
+            client_active[free_slot] = 0;
+
+            close(new_socket);
+
+            continue;
+        }
+
+
+        client_data->client_socket =
+            new_socket;
+
+        client_data->client_id =
+            client_id;
+
+
+        /* ======================================
+           CREATE THREAD
+           ====================================== */
+
+        pthread_t thread;
+
+
+        if (pthread_create(&thread,
+                           NULL,
+                           client_handler,
+                           client_data) != 0)
+        {
+            perror("Thread creation failed");
+
+            client_active[free_slot] =
+                0;
+
+            close(new_socket);
+
+            free(client_data);
+
+            continue;
+        }
+
+
+        /*
+           Thread runs independently.
+        */
+
+        pthread_detach(thread);
+
+
+        /*
+           IMPORTANT:
+
+           The client handler closes the socket
+           when client disconnects.
+
+           We check and reuse free slots
+           when another client connects.
+        */
+    }
+
+
+    /* ==========================================
+       CLEANUP
+       ========================================== */
+
+    close(server_fd);
+
+    pthread_mutex_destroy(&table_mutex);
+
+    return 0;
+}
