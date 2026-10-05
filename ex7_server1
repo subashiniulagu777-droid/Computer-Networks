@@ -1,0 +1,110 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 8000
+#define MAX_QUESTIONS 3
+#define BUFFER_SIZE 1024
+
+typedef struct {
+    char username[50];
+    char password[50];
+} AuthRequest;
+
+typedef struct {
+    int cmd_type;
+    int q_id;
+    char selected_option;
+} ExamPayload;
+
+typedef struct {
+    int status;
+    char message[BUFFER_SIZE];
+} ServerResponse;
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    AuthRequest auth;
+    ServerResponse res;
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) { perror("Socket error"); return 1; }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Connection to Exam Portal failed");
+        close(sock);
+        return 1;
+    }
+
+    printf("--- EXAM GATEWAY SYSTEM ---\n");
+    printf("Enter Username: ");
+    scanf("%s", auth.username);
+    printf("Enter Password: ");
+    scanf("%s", auth.password);
+
+    // Send authentication frame immediately
+    send(sock, &auth, sizeof(AuthRequest), 0);
+    
+    memset(&res, 0, sizeof(ServerResponse));
+    recv(sock, &res, sizeof(ServerResponse), 0);
+    printf("\n[PORTAL]: %s\n", res.message);
+
+    if (res.status == -1) {
+        close(sock);
+        return 0; // Terminate execution due to bad profile check
+    }
+
+    // Launch Portal Menu Loop
+    int choice;
+    while (1) {
+        printf("\n========= STUDENT DASHBOARD =========\n");
+        printf("1. Pull Question Pack List\n");
+        printf("2. Submit Question Answer\n");
+        printf("3. Review Final Score & End Test\n");
+        printf("4. Disconnect Portal\n");
+        printf("Enter Selection: ");
+        scanf("%d", &choice);
+
+        if (choice == 4) break;
+
+        ExamPayload req;
+        memset(&req, 0, sizeof(ExamPayload));
+        req.cmd_type = choice;
+
+        if (choice == 1) {
+            printf("Enter Question Number (1-%d): ", MAX_QUESTIONS);
+            scanf("%d", &req.q_id);
+        } 
+        else if (choice == 2) {
+            printf("Enter Question Number (1-%d): ", MAX_QUESTIONS);
+            scanf("%d", &req.q_id);
+            printf("Enter your Answer Option Choice (A, B, C, or D): ");
+            scanf(" %c", &req.selected_option); // Notice space before %c to ignore leading newline buffer
+        } 
+        else if (choice != 3) {
+            printf("Invalid input choice option framework selection.\n");
+            continue;
+        }
+
+        send(sock, &req, sizeof(ExamPayload), 0);
+
+        memset(&res, 0, sizeof(ServerResponse));
+        recv(sock, &res, sizeof(ServerResponse), 0);
+        printf("\n[PORTAL RESPONDED]:\n%s\n", res.message);
+        
+        if (choice == 3) break; // End session after pulling scores
+    }
+
+    close(sock);
+    printf("Portal closed successfully. Good luck!\n");
+    return 0;
+}
