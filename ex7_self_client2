@@ -1,0 +1,118 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 9000
+#define BUFFER_SIZE 1024
+
+typedef enum {
+    CMD_LIST = 1,
+    CMD_DOWNLOAD = 2
+} CmdType;
+
+typedef struct {
+    int cmd_type;
+    char filename[256];
+} FileRequest;
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    int choice;
+    char list_buffer[4096];
+    char write_buffer[BUFFER_SIZE];
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) { perror("Socket build failure"); return 1; }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Connection to storage hub failed");
+        close(sock);
+        return 1;
+    }
+
+    printf("Connected to the Concurrent File Sharing Server.\n");
+
+    while (1) {
+        printf("\n========= FILE HUB INTERFACE =========\n");
+        printf("1. List All Available Server Files\n");
+        printf("2. Download a Specific File\n");
+        printf("3. Disconnect & Exit\n");
+        printf("Select Option: ");
+        if (scanf("%d", &choice) != 1) break;
+
+        if (choice == 3) break;
+
+        FileRequest req;
+        memset(&req, 0, sizeof(FileRequest));
+        req.cmd_type = choice;
+
+        if (choice == CMD_LIST) {
+            send(sock, &req, sizeof(FileRequest), 0);
+            
+            memset(list_buffer, 0, sizeof(list_buffer));
+            recv(sock, list_buffer, sizeof(list_buffer), 0);
+            printf("%s", list_buffer);
+        } 
+        else if (choice == CMD_DOWNLOAD) {
+            printf("Enter exact filename to download: ");
+            scanf("%s", req.filename);
+
+            send(sock, &req, sizeof(FileRequest), 0);
+
+            long file_size = 0;
+            // Read initial file size descriptor back
+            recv(sock, &file_size, sizeof(long), 0);
+
+            if (file_size == -1) {
+                printf("[PORTAL RESPONSE]: File does not exist on the server.\n");
+                continue;
+            }
+
+            // Create a local output file to dump down streamed data
+            char local_filename[300];
+            snprintf(local_filename, sizeof(local_filename), "downloaded_%s", req.filename);
+            FILE *fp = fopen(local_filename, "wb");
+
+            if (fp == NULL) {
+                printf("[ERROR] Failed to generate local file placeholder.\n");
+                continue;
+            }
+
+            printf("[DOWNLOADING] Receiving '%s' (%ld bytes)...\n", req.filename, file_size);
+            
+            long total_received = 0;
+            int bytes_read;
+            
+            // Loop until total chunks match the target file size metadata
+            while (total_received < file_size) {
+                bytes_read = recv(sock, write_buffer, BUFFER_SIZE, 0);
+                if (bytes_read <= 0) break;
+                
+                fwrite(write_buffer, 1, bytes_read, fp);
+                total_received += bytes_read;
+            }
+            fclose(fp);
+
+            if (total_received == file_size) {
+                printf("[SUCCESS] File saved locally as: %s\n", local_filename);
+            } else {
+                printf("[WARNING] Transfer incomplete. Received %ld of %ld bytes.\n", total_received, file_size);
+            }
+        } else {
+            printf("Invalid item choice input.\n");
+        }
+    }
+
+    close(sock);
+    printf("Disconnected. Goodbye!\n");
+    return 0;
+}
