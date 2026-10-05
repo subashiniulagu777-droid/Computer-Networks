@@ -1,0 +1,132 @@
+#include "headerFiles.h"
+
+int main(int argc, char *argv[])
+{
+    // Declare and define
+
+    SOCKET s;                          // Socket descriptor
+
+    int size;                          // Number of elements
+    int arr[100];                      // Array received
+    int i;                             // Loop variable
+
+    int servPort;                      // Server port number
+    char *servName;                    // Server IP address
+
+    struct sockaddr_in serverAddr;     // Server socket address
+
+    WSADATA wsa;                       // Winsock data
+
+
+    // Initialize Winsock
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    {
+        printf("Error: WSAStartup failed!\n");
+        exit(1);
+    }
+
+
+    // Check and set arguments
+
+    if (argc != 3)
+    {
+        printf("Error: two arguments are needed!\n");
+        printf("Usage: array_client <Server IP> <Port>\n");
+
+        WSACleanup();
+        exit(1);
+    }
+
+
+    servName = argv[1];
+    servPort = atoi(argv[2]);
+
+
+    // Create remote server socket address
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+
+    serverAddr.sin_family = AF_INET;
+
+    if (inet_pton(AF_INET, servName,
+                  &serverAddr.sin_addr) <= 0)
+    {
+        printf("Error: Invalid server IP address!\n");
+
+        WSACleanup();
+        exit(1);
+    }
+
+    serverAddr.sin_port = htons(servPort);
+
+
+    // Create socket
+
+    s = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (s == INVALID_SOCKET)
+    {
+        printf("Error: Socket creation failed!\n");
+
+        WSACleanup();
+        exit(1);
+    }
+
+
+    // Connect to the server
+
+    if (connect(s, (struct sockaddr *)&serverAddr,
+                sizeof(serverAddr)) == SOCKET_ERROR)
+    {
+        printf("Error: Connection failed!\n");
+
+        closesocket(s);
+        WSACleanup();
+        exit(1);
+    }
+
+
+    printf("====================================\n");
+    printf("       TCP ARRAY CLIENT\n");
+    printf("====================================\n");
+
+    printf("Connected to server successfully!\n");
+
+
+    // Data transfer section
+
+    // Receive number of elements
+
+    recv(s, (char *)&size, sizeof(size), 0);
+
+
+    // Receive array from server
+
+    recv(s, (char *)arr,
+         size * sizeof(int), 0);
+
+
+    // Display received array
+
+    printf("\nArray received from server:\n");
+
+    for (i = 0; i < size; i++)
+    {
+        printf("%d ", arr[i]);
+    }
+
+    printf("\n");
+
+
+    // Close socket
+
+    closesocket(s);
+
+
+    // Stop program
+
+    WSACleanup();
+
+    return 0;
+}
