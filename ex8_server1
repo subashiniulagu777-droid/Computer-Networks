@@ -1,0 +1,131 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <errno.h>
+
+#define PORT 5000
+#define BUFFER_SIZE 1024
+#define WINDOW_SIZE 1                      // Change this to 1 for strict Stop-and-Wait
+#define QUEUE_CAPACITY (WINDOW_SIZE + 1)   // Ring buffer size becomes 2 slots
+#define TIMEOUT_SEC 3
+
+struct Frame {
+    int seq;
+    char data[BUFFER_SIZE];
+};
+
+struct CircularQueue {
+    struct Frame items[QUEUE_CAPACITY];
+    int front;
+    int rear;
+};
+
+void initQueue(struct CircularQueue *q) { q->front = 0; q->rear = 0; }
+int isFull(struct CircularQueue *q) { return ((q->rear + 1) % QUEUE_CAPACITY) == q->front; }
+int isEmpty(struct CircularQueue *q) { return q->front == q->rear; }
+
+void enqueue(struct CircularQueue *q, struct Frame f) {
+    if (!isFull(q)) {
+        q->items[q->rear] = f;
+        q->rear = (q->rear + 1) % QUEUE_CAPACITY;
+    }
+}
+
+struct Frame dequeue(struct CircularQueue *q) {
+    struct Frame f = q->items[q->front];
+    q->front = (q->front + 1) % QUEUE_CAPACITY;
+    return f;
+}
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len = sizeof(client_addr);
+
+    struct CircularQueue queue;
+    initQueue(&queue);
+
+    int total_frames;
+    int next_frame_to_send = 0;
+    int base = 0;
+    char ack_buffer[20];
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) { perror("Socket failed"); return 1; }
+
+    struct timeval tv = { .tv_sec = TIMEOUT_SEC, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed"); close(sock); return 1;
+    }
+
+    printf("====================================================\n");
+    printf("   STOP-AND-WAIT SERVER (CIRCULAR QUEUE CAP = 1)\n");
+    printf("====================================================\n\n");
+
+    printf("Enter total number of frames to send: ");
+    if (scanf("%d", &total_frames) != 1 || total_frames <= 0) return 1;
+
+    struct Frame *user_data_store = malloc(total_frames * sizeof(struct Frame));
+    int i;
+    for ( i = 0; i < total_frames; i++) {
+        user_data_store[i].seq = i;
+        printf("Enter text content payload for Frame %d: ", i);
+        scanf(" %[^\n]", user_data_store[i].data);
+    }
+
+    printf("\nWaiting for client handshake registration port poke...\n");
+    char handshake;
+    recvfrom(sock, &handshake, sizeof(handshake), 0, (struct sockaddr *)&client_addr, &client_len);
+    printf("Client locked! Beginning step transmission.\n\n");
+
+    while (base < total_frames) {
+        // Enqueue and send exactly 1 frame because WINDOW_SIZE = 1
+        while (!isFull(&queue) && next_frame_to_send < total_frames) {
+            enqueue(&queue, user_data_store[next_frame_to_send]);
+
+            printf("[SEND] Frame %d dispatched -> Data: %s\n",
+                   user_data_store[next_frame_to_send].seq, user_data_store[next_frame_to_send].data);
+
+            sendto(sock, (char *)&user_data_store[next_frame_to_send], sizeof(struct Frame), 0,
+                   (struct sockaddr *)&client_addr, client_len);
+            next_frame_to_send++;
+        }
+
+        memset(ack_buffer, 0, sizeof(ack_buffer));
+        int n = recvfrom(sock, ack_buffer, sizeof(ack_buffer) - 1, 0, (struct sockaddr *)&client_addr, &client_len);
+
+        if (n > 0) {
+            ack_buffer[n] = '\0';
+            int ack_seq = -1;
+
+            if (sscanf(ack_buffer, "ACK %d", &ack_seq) == 1 || sscanf(ack_buffer, "ACK%d", &ack_seq) == 1) {
+                if (ack_seq == base) { // Strict check for the expected single frame ACK
+                    printf("[ACK RECEIVED] Client acknowledged Frame: %d\n", ack_seq);
+                    dequeue(&queue);
+                    base++; // Shift base forward to unlock the next single frame insertion step
+                }
+            }
+        }
+        else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            printf("\n[TIMEOUT] No ACK received! Retransmitting Frame %d...\n", base);
+            struct Frame resend_frame = queue.items[queue.front];
+            sendto(sock, (char *)&resend_frame, sizeof(resend_frame), 0, (struct sockaddr *)&client_addr, client_len);
+        }
+    }
+
+    printf("\nSuccess! All %d frames transferred step-by-step.\n", total_frames);
+    free(user_data_store);
+    close(sock);
+    return 0;
+}
