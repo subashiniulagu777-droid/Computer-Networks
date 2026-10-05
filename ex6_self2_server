@@ -1,0 +1,239 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 7000
+#define MAX_MOVIES 3
+#define MAX_BOOKINGS 100
+#define MSG_BUFFER 1024
+
+// Protocol Menu Commands
+typedef enum {
+    CMD_VIEW_MOVIES = 1,
+    CMD_CHECK_SEATS,
+    CMD_BOOK_TICKETS,
+    CMD_CANCEL_BOOKING,
+    CMD_VIEW_STATUS
+} CmdType;
+
+// Structured Request packet layout
+typedef struct {
+    int cmd_type;
+    int movie_id;
+    int ticket_count;
+    int booking_id;
+} Request;
+
+// Structured Response packet layout
+typedef struct {
+    int status; // 0 for Success, -1 for Failure
+    char message[MSG_BUFFER];
+} Response;
+
+// Core Database Layouts
+typedef struct {
+    int id;
+    char title[50];
+    char show_time[20];
+    int total_seats;
+    int available_seats;
+    int price;
+} Movie;
+
+typedef struct {
+    int booking_id;
+    int movie_id;
+    int seat_count;
+    int is_active; // 1 = Valid, 0 = Cancelled
+} Booking;
+
+// Global In-Memory Database State
+Movie movie_db[MAX_MOVIES] = {
+    {201, "Inception", "03:00 PM", 60, 60, 150},
+    {202, "Interstellar", "06:30 PM", 40, 40, 180},
+    {203, "The Dark Knight", "09:45 PM", 30, 12, 200} // Started partially booked
+};
+
+Booking booking_db[MAX_BOOKINGS];
+int total_bookings = 0;
+int next_booking_id = 9001; // Starter reference ID
+
+void handle_movie_client(int client_sock) {
+    Request req;
+    Response res;
+
+    // Loop blocks and processes transactions strictly for this singular client session
+    while (recv(client_sock, &req, sizeof(Request), 0) > 0) {
+        memset(&res, 0, sizeof(Response));
+        res.status = -1; // Default status flag
+
+        switch (req.cmd_type) {
+            case CMD_VIEW_MOVIES:
+                sprintf(res.message, "\n============= CURRENTLY RUNNING =============");
+                for (int i = 0; i < MAX_MOVIES; i++) {
+                    char temp[256];
+                    sprintf(temp, "\nID: %d | %-16s | Show: %s | Seats: %d/%d | Price: Rs.%d",
+                            movie_db[i].id, movie_db[i].title, movie_db[i].show_time, 
+                            movie_db[i].available_seats, movie_db[i].total_seats, movie_db[i].price);
+                    strcat(res.message, temp);
+                }
+                strcat(res.message, "\n=============================================");
+                res.status = 0;
+                break;
+
+            case CMD_CHECK_SEATS: {
+                int found = 0;
+                for (int i = 0; i < MAX_MOVIES; i++) {
+                    if (movie_db[i].id == req.movie_id) {
+                        sprintf(res.message, "Movie: '%s' (%s) -> %d available seats left.", 
+                                movie_db[i].title, movie_db[i].show_time, movie_db[i].available_seats);
+                        res.status = 0;
+                        found = 1;
+                        break;
+                    }
+                }
+                if (!found) sprintf(res.message, "Error: Movie ID %d not found in database.", req.movie_id);
+                break;
+            }
+
+            case CMD_BOOK_TICKETS: {
+                int index = -1;
+                for (int i = 0; i < MAX_MOVIES; i++) {
+                    if (movie_db[i].id == req.movie_id) { index = i; break; }
+                }
+
+                if (index == -1) {
+                    sprintf(res.message, "Booking Failed: Invalid Movie ID.");
+                } else if (req.ticket_count <= 0) {
+                    sprintf(res.message, "Booking Failed: Minimum booking quantum is 1 ticket.");
+                } else if (movie_db[index].available_seats < req.ticket_count) {
+                    sprintf(res.message, "Booking Failed: Housefull or insufficient seats. Only %d seats available.", 
+                            movie_db[index].available_seats);
+                } else {
+                    // Update seat ledger safely
+                    movie_db[index].available_seats -= req.ticket_count;
+                    
+                    // Create persistent receipt mapping
+                    booking_db[total_bookings].booking_id = next_booking_id;
+                    booking_db[total_bookings].movie_id = req.movie_id;
+                    booking_db[total_bookings].seat_count = req.ticket_count;
+                    booking_db[total_bookings].is_active = 1;
+
+                    int total_cost = movie_db[index].price * req.ticket_count;
+                    sprintf(res.message, "Booking Success! ID: %d | Movie: %s | Tickets: %d | Bill: Rs.%d", 
+                            next_booking_id, movie_db[index].title, req.ticket_count, total_cost);
+                    
+                    res.status = 0;
+                    next_booking_id++;
+                    total_bookings++;
+                }
+                break;
+            }
+
+            case CMD_CANCEL_BOOKING: {
+                int b_index = -1;
+                for (int i = 0; i < total_bookings; i++) {
+                    if (booking_db[i].booking_id == req.booking_id && booking_db[i].is_active == 1) {
+                        b_index = i; break;
+                    }
+                }
+
+                if (b_index == -1) {
+                    sprintf(res.message, "Cancellation Failed: Invalid, processing, or already cancelled Booking ID.");
+                } else {
+                    // Refund seat counts to parent schedule profile
+                    for (int j = 0; j < MAX_MOVIES; j++) {
+                        if (movie_db[j].id == booking_db[b_index].movie_id) {
+                            movie_db[j].available_seats += booking_db[b_index].seat_count;
+                            sprintf(res.message, "Cancellation Successful! Refund processed for %d seats on '%s'.", 
+                                    booking_db[b_index].seat_count, movie_db[j].title);
+                            break;
+                        }
+                    }
+                    booking_db[b_index].is_active = 0; // Terminate record validation
+                    res.status = 0;
+                }
+                break;
+            }
+
+            case CMD_VIEW_STATUS: {
+                int b_index = -1;
+                for (int i = 0; i < total_bookings; i++) {
+                    if (booking_db[i].booking_id == req.booking_id) { b_index = i; break; }
+                }
+
+                if (b_index == -1) {
+                    sprintf(res.message, "No verified ticket found matching Booking ID %d.", req.booking_id);
+                } else {
+                    char m_name[50] = "Unknown";
+                    for (int j = 0; j < MAX_MOVIES; j++) {
+                        if (movie_db[j].id == booking_db[b_index].movie_id) {
+                            strcpy(m_name, movie_db[j].title); break;
+                        }
+                    }
+                    sprintf(res.message, "Ticket Query -> ID: %d | Movie: %s | Seats: %d | Status: %s",
+                            booking_db[b_index].booking_id, m_name, booking_db[b_index].seat_count, 
+                            booking_db[b_index].is_active ? "CONFIRMED" : "CANCELLED/REFUNDED");
+                    res.status = 0;
+                }
+                break;
+            }
+
+            default:
+                sprintf(res.message, "Invalid framework call option received.");
+                break;
+        }
+
+        // Return state updates directly back down the channel
+        send(client_sock, &res, sizeof(Response), 0);
+    }
+
+    printf("[SERVER INFO] Client session closed. Ready for next incoming connection pipeline.\n");
+    close(client_sock);
+}
+
+int main() {
+    int server_sock, client_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len = sizeof(client_addr);
+
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock < 0) { perror("Socket failed"); return 1; }
+
+    int option_toggle = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &option_toggle, sizeof(option_toggle));
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed"); close(server_sock); return 1;
+    }
+
+    if (listen(server_sock, 3) < 0) {
+        perror("Listen failed"); close(server_sock); return 1;
+    }
+
+    printf("========================================================\n");
+    printf("     ITERATIVE MOVIE BOOKING SERVER RUNNING (PORT %d)\n", PORT);
+    printf("========================================================\n\n");
+
+    while (1) {
+        printf("Awaiting standalone client transaction pipeline connection...\n");
+        client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &client_len);
+        if (client_sock < 0) { perror("Accept execution error"); continue; }
+
+        printf("[SERVER INFO] Client safely connected from IP: %s\n", inet_ntoa(client_addr.sin_addr));
+        
+        // Synchronous call: blocks here until this single customer finishes/exits menu
+        handle_movie_client(client_sock); 
+    }
+
+    close(server_sock);
+    return 0;
+}
