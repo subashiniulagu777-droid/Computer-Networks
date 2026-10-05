@@ -1,0 +1,514 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#define BUFFER_SIZE 1024
+#define MAX_CLIENTS 5
+
+struct Client
+{
+    int socket;
+    int id;
+};
+
+struct Client clients[MAX_CLIENTS];
+
+pthread_mutex_t client_lock = PTHREAD_MUTEX_INITIALIZER;
+
+
+/* =========================================
+   REMOVE CLIENT
+   ========================================= */
+
+void remove_client(int client_id)
+{
+    pthread_mutex_lock(&client_lock);
+
+    clients[client_id - 1].socket = -1;
+    clients[client_id - 1].id = 0;
+
+    pthread_mutex_unlock(&client_lock);
+}
+
+
+/* =========================================
+   CLIENT THREAD
+   ========================================= */
+
+void *client_handler(void *arg)
+{
+    int client_id = *(int *)arg;
+
+    free(arg);
+
+    int client_fd;
+
+    pthread_mutex_lock(&client_lock);
+
+    client_fd = clients[client_id - 1].socket;
+
+    pthread_mutex_unlock(&client_lock);
+
+
+    char buffer[BUFFER_SIZE];
+
+    memset(buffer, 0, sizeof(buffer));
+
+
+    /* =================================
+       RECEIVE FILE NAME
+       ================================= */
+
+    int n = recv(client_fd,
+                 buffer,
+                 BUFFER_SIZE - 1,
+                 0);
+
+    if (n <= 0)
+    {
+        printf("\n[Client%d] Connection closed.\n",
+               client_id);
+
+        close(client_fd);
+
+        remove_client(client_id);
+
+        return NULL;
+    }
+
+
+    buffer[n] = '\0';
+
+    buffer[strcspn(buffer, "\r\n")] = '\0';
+
+
+    printf("\n[Client%d] Requested file: %s\n",
+           client_id,
+           buffer);
+
+
+    /* =================================
+       OPEN FILE
+       ================================= */
+
+    FILE *file = fopen(buffer, "rb");
+
+
+    if (file == NULL)
+    {
+        char error_message[] =
+            "ERROR: File not found";
+
+        printf("[Client%d] File not found.\n",
+               client_id);
+
+
+        send(client_fd,
+             error_message,
+             strlen(error_message),
+             0);
+
+
+        close(client_fd);
+
+        remove_client(client_id);
+
+        return NULL;
+    }
+
+
+    /* =================================
+       FILE FOUND
+       ================================= */
+
+    printf("[Client%d] File found.\n",
+           client_id);
+
+    printf("[Client%d] Sending SUCCESS...\n",
+           client_id);
+
+
+    char success[] = "SUCCESS";
+
+
+    send(client_fd,
+         success,
+         strlen(success),
+         0);
+
+
+    /*
+       Small delay so client can receive
+       SUCCESS before file data.
+    */
+
+    usleep(100000);
+
+
+    /* =================================
+       SEND FILE
+       ================================= */
+
+    int bytes_read;
+
+
+    while ((bytes_read =
+            fread(buffer,
+                  1,
+                  BUFFER_SIZE,
+                  file)) > 0)
+    {
+        int bytes_sent = 0;
+
+
+        while (bytes_sent < bytes_read)
+        {
+            int sent =
+                send(client_fd,
+                     buffer + bytes_sent,
+                     bytes_read - bytes_sent,
+                     0);
+
+
+            if (sent <= 0)
+            {
+                printf("[Client%d] File transfer failed.\n",
+                       client_id);
+
+                fclose(file);
+
+                close(client_fd);
+
+                remove_client(client_id);
+
+                return NULL;
+            }
+
+
+            bytes_sent += sent;
+        }
+    }
+
+
+    fclose(file);
+
+
+    printf("[Client%d] File transfer complete.\n",
+           client_id);
+
+
+    /* =================================
+       CLOSE CLIENT
+       ================================= */
+
+    close(client_fd);
+
+    remove_client(client_id);
+
+    printf("[Client%d] Disconnected.\n",
+           client_id);
+
+
+    return NULL;
+}
+
+
+/* =========================================
+   MAIN SERVER
+   ========================================= */
+
+int main(int argc, char *argv[])
+{
+    int server_fd;
+    int client_fd;
+
+    struct sockaddr_in server_addr;
+    struct sockaddr_in client_addr;
+
+    socklen_t client_addr_len;
+
+
+    /* =================================
+       CHECK PORT
+       ================================= */
+
+    if (argc != 2)
+    {
+        printf("Usage: %s <port>\n",
+               argv[0]);
+
+        return 1;
+    }
+
+
+    /* =================================
+       INITIALIZE CLIENT TABLE
+       ================================= */
+    int i;
+    for ( i = 0; i < MAX_CLIENTS; i++)
+    {
+        clients[i].socket = -1;
+        clients[i].id = 0;
+    }
+
+
+    /* =================================
+       CREATE TCP SOCKET
+       ================================= */
+
+    server_fd =
+        socket(AF_INET,
+               SOCK_STREAM,
+               0);
+
+
+    if (server_fd < 0)
+    {
+        perror("Socket creation failed");
+
+        return 1;
+    }
+
+
+    /* =================================
+       REUSE PORT
+       ================================= */
+
+    int opt = 1;
+
+    setsockopt(server_fd,
+               SOL_SOCKET,
+               SO_REUSEADDR,
+               &opt,
+               sizeof(opt));
+
+
+    /* =================================
+       SERVER ADDRESS
+       ================================= */
+
+    memset(&server_addr,
+           0,
+           sizeof(server_addr));
+
+
+    server_addr.sin_family =
+        AF_INET;
+
+    server_addr.sin_addr.s_addr =
+        INADDR_ANY;
+
+    server_addr.sin_port =
+        htons(atoi(argv[1]));
+
+
+    /* =================================
+       BIND
+       ================================= */
+
+    if (bind(server_fd,
+             (struct sockaddr *)&server_addr,
+             sizeof(server_addr)) < 0)
+    {
+        perror("Bind failed");
+
+        close(server_fd);
+
+        return 1;
+    }
+
+
+    /* =================================
+       LISTEN
+       ================================= */
+
+    if (listen(server_fd,
+               MAX_CLIENTS) < 0)
+    {
+        perror("Listen failed");
+
+        close(server_fd);
+
+        return 1;
+    }
+
+
+    printf("\n========================================\n");
+    printf("       CONCURRENT FTP SERVER\n");
+    printf("========================================\n");
+
+    printf("Server running on port %s...\n",
+           argv[1]);
+
+    printf("Maximum clients : %d\n",
+           MAX_CLIENTS);
+
+    printf("Waiting for clients...\n");
+
+
+    /* =================================
+       ACCEPT CLIENTS
+       ================================= */
+
+    while (1)
+    {
+        client_addr_len =
+            sizeof(client_addr);
+
+
+        client_fd =
+            accept(server_fd,
+                   (struct sockaddr *)&client_addr,
+                   &client_addr_len);
+
+
+        if (client_fd < 0)
+        {
+            perror("Accept failed");
+
+            continue;
+        }
+
+
+        /* =================================
+           FIND FREE CLIENT SLOT
+           ================================= */
+
+        pthread_mutex_lock(&client_lock);
+
+        int slot = -1;
+
+
+        for ( i = 0; i < MAX_CLIENTS; i++)
+        {
+            if (clients[i].socket == -1)
+            {
+                slot = i;
+                break;
+            }
+        }
+
+
+        /* =================================
+           SERVER FULL
+           ================================= */
+
+        if (slot == -1)
+        {
+            pthread_mutex_unlock(&client_lock);
+
+            char full_message[] =
+                "ERROR: Server Full";
+
+            send(client_fd,
+                 full_message,
+                 strlen(full_message),
+                 0);
+
+            printf("\n[Main Server] Connection rejected.\n");
+            printf("Maximum %d clients already connected.\n",
+                   MAX_CLIENTS);
+
+            close(client_fd);
+
+            continue;
+        }
+
+
+        /* =================================
+           ASSIGN CLIENT
+           ================================= */
+
+        int id = slot + 1;
+
+        clients[slot].socket = client_fd;
+        clients[slot].id = id;
+
+
+        pthread_mutex_unlock(&client_lock);
+
+
+        printf("\n----------------------------------------\n");
+
+        printf("[Main Server] Client%d connected\n",
+               id);
+
+        printf("IP   : %s\n",
+               inet_ntoa(client_addr.sin_addr));
+
+        printf("Port : %d\n",
+               ntohs(client_addr.sin_port));
+
+        printf("----------------------------------------\n");
+
+
+        /* =================================
+           ALLOCATE CLIENT ID
+           ================================= */
+
+        int *client_id =
+            malloc(sizeof(int));
+
+
+        if (client_id == NULL)
+        {
+            printf("Memory allocation failed!\n");
+
+            close(client_fd);
+
+            remove_client(id);
+
+            continue;
+        }
+
+
+        *client_id = id;
+
+
+        /* =================================
+           CREATE THREAD
+           ================================= */
+
+        pthread_t thread;
+
+
+        if (pthread_create(&thread,
+                           NULL,
+                           client_handler,
+                           client_id) != 0)
+        {
+            printf("Thread creation failed!\n");
+
+            close(client_fd);
+
+            free(client_id);
+
+            remove_client(id);
+        }
+        else
+        {
+            /*
+               Detach thread so resources
+               are automatically released.
+            */
+
+            pthread_detach(thread);
+        }
+    }
+
+
+    /* =================================
+       CLEANUP
+       ================================= */
+
+    close(server_fd);
+
+    pthread_mutex_destroy(&client_lock);
+
+    return 0;
+}
