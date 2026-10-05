@@ -1,0 +1,169 @@
+#include "headerFiles.h"
+
+int main(void)
+{
+    // Declare and define
+
+    SOCKET ls;                         // Listen socket
+    SOCKET s;                          // Client socket
+
+    int arr[100];                      // Array
+    int size;                          // Number of elements
+    int i;                             // Loop variable
+
+    struct sockaddr_in servAddr;       // Server address
+    struct sockaddr_in clientAddr;     // Client address
+
+    int clientAddrLen;                 // Client address length
+
+    WSADATA wsa;                       // Winsock data
+
+
+    // Initialize Winsock
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    {
+        printf("Error: WSAStartup failed!\n");
+        exit(1);
+    }
+
+
+    // Create local server socket address
+
+    memset(&servAddr, 0, sizeof(servAddr));
+
+    servAddr.sin_family = AF_INET;
+    servAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    servAddr.sin_port = htons(SERV_PORT);
+
+
+    // Create listen socket
+
+    ls = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (ls == INVALID_SOCKET)
+    {
+        printf("Error: Listen socket failed!\n");
+
+        WSACleanup();
+        exit(1);
+    }
+
+
+    // Bind listen socket
+
+    if (bind(ls, (struct sockaddr *)&servAddr,
+             sizeof(servAddr)) == SOCKET_ERROR)
+    {
+        printf("Error: Binding failed!\n");
+
+        closesocket(ls);
+        WSACleanup();
+        exit(1);
+    }
+
+
+    // Listen for client
+
+    if (listen(ls, 16) == SOCKET_ERROR)
+    {
+        printf("Error: Listening failed!\n");
+
+        closesocket(ls);
+        WSACleanup();
+        exit(1);
+    }
+
+
+    printf("====================================\n");
+    printf("       TCP ARRAY SUM SERVER\n");
+    printf("====================================\n");
+
+    printf("Server waiting for client...\n");
+
+
+    // Handle client connection
+
+    for (;;)
+    {
+        // Accept client
+
+        clientAddrLen = sizeof(clientAddr);
+
+        s = accept(ls,
+                   (struct sockaddr *)&clientAddr,
+                   &clientAddrLen);
+
+        if (s == INVALID_SOCKET)
+        {
+            printf("Error: Accepting failed!\n");
+
+            closesocket(ls);
+            WSACleanup();
+            exit(1);
+        }
+
+
+        printf("\nClient connected successfully!\n");
+
+
+        // Get array size
+
+        printf("\nEnter number of elements (0 to exit): ");
+        scanf("%d", &size);
+
+
+        // Exit condition
+
+        if (size == 0)
+        {
+            printf("\nServer shutting down...\n");
+
+            closesocket(s);
+            break;
+        }
+
+
+        // Get array elements
+
+        printf("Enter %d numbers:\n", size);
+
+        for (i = 0; i < size; i++)
+        {
+            scanf("%d", &arr[i]);
+        }
+
+
+        // Send number of elements
+
+        send(s,
+             (char *)&size,
+             sizeof(size),
+             0);
+
+
+        // Send array
+
+        send(s,
+             (char *)arr,
+             size * sizeof(int),
+             0);
+
+
+        printf("\nArray sent successfully to client.\n");
+
+
+        // Close client socket
+
+        closesocket(s);
+    }
+
+
+    // Close server socket
+
+    closesocket(ls);
+
+    WSACleanup();
+
+    return 0;
+}
