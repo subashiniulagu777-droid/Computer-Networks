@@ -1,0 +1,103 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 6000
+#define BUFFER_SIZE 512
+
+typedef enum {
+    CMD_SEARCH = 1,
+    CMD_AVAILABILITY,
+    CMD_BOOK,
+    CMD_CANCEL,
+    CMD_STATUS
+} CmdType;
+
+typedef struct {
+    int cmd_type;
+    int train_id;
+    int tickets_count;
+    int booking_id;
+} Request;
+
+typedef struct {
+    int status;
+    int data1;
+    char message[BUFFER_SIZE];
+} Response;
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    Request req;
+    Response res;
+    int choice;
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) { perror("Socket creation error"); return 1; }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Connection to reservation server failed");
+        close(sock);
+        return 1;
+    }
+
+    printf("Connected to the Railway Reservation System.\n");
+
+    while (1) {
+        printf("\n--- RAILWAY RESERVATION MENU ---\n");
+        printf("1. Search Trains & Routes\n");
+        printf("2. Check Seat Availability\n");
+        printf("3. Book Tickets\n");
+        printf("4. Cancel Reservation\n");
+        printf("5. View Booking Status\n");
+        printf("6. Exit System\n");
+        printf("Enter option: ");
+        if (scanf("%d", &choice) != 1) break;
+
+        if (choice == 6) break;
+
+        memset(&req, 0, sizeof(Request));
+        req.cmd_type = choice;
+
+        if (choice == CMD_AVAILABILITY) {
+            printf("Enter Train ID: ");
+            scanf("%d", &req.train_id);
+        } else if (choice == CMD_BOOK) {
+            printf("Enter Train ID: ");
+            scanf("%d", &req.train_id);
+            printf("Enter Number of Seats: ");
+            scanf("%d", &req.tickets_count);
+        } else if (choice == CMD_CANCEL || choice == CMD_STATUS) {
+            printf("Enter Booking ID: ");
+            scanf("%d", &req.booking_id);
+        } else if (choice != CMD_SEARCH) {
+            printf("Invalid selection.\n");
+            continue;
+        }
+
+        // Send transaction payload
+        send(sock, &req, sizeof(Request), 0);
+
+        // Receive processing results
+        memset(&res, 0, sizeof(Response));
+        if (recv(sock, &res, sizeof(Response), 0) <= 0) {
+            printf("Server closed connection.\n");
+            break;
+        }
+
+        printf("\n[SERVER RESPONSE]: %s\n", res.message);
+    }
+
+    close(sock);
+    printf("Goodbye!\n");
+    return 0;
+}
