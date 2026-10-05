@@ -1,0 +1,155 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <pthread.h>
+#include <dirent.h>
+#include <sys/stat.h>
+
+#define PORT 9000
+#define BUFFER_SIZE 1024
+#define SHARED_DIR "./shared_files/"
+
+// Protocol Commands
+typedef enum {
+    CMD_LIST = 1,
+    CMD_DOWNLOAD = 2
+} CmdType;
+
+typedef struct {
+    int cmd_type;
+    char filename[256];
+} FileRequest;
+
+// Separate worker thread function for each client connection
+void *client_file_handler(void *arg) {
+    int client_sock = *(int *)arg;
+    free(arg); // Clean up the dynamically allocated memory from main
+
+    FileRequest req;
+    char buffer[BUFFER_SIZE];
+
+    // Read commands loop from the client
+    while (recv(client_sock, &req, sizeof(FileRequest), 0) > 0) {
+        if (req.cmd_type == CMD_LIST) {
+            DIR *dir = opendir(SHARED_DIR);
+            struct dirent *entry;
+            char file_list[4096] = "";
+
+            if (dir == NULL) {
+                strcpy(file_list, "Error: Shared storage folder not found on server.\n");
+            } else {
+                strcat(file_list, "\n--- Available Files for Download ---\n");
+                while ((entry = readdir(dir)) != NULL) {
+                    // Filter out hidden configurations and parent dots
+                    if (entry->d_name[0] != '.') {
+                        strcat(file_list, entry->d_name);
+                        strcat(file_list, "\n");
+                    }
+                }
+                closedir(dir);
+                strcat(file_list, "-------------------------------------\n");
+            }
+            // Send back the directory listing
+            send(client_sock, file_list, strlen(file_list) + 1, 0);
+        } 
+        else if (req.cmd_type == CMD_DOWNLOAD) {
+            char filepath[512];
+            // Sanitize and construct direct path safely
+            snprintf(filepath, sizeof(filepath), "%s%s", SHARED_DIR, req.filename);
+
+            printf("[SERVER INFO] Processing download request for file: %s\n", req.filename);
+            FILE *fp = fopen(filepath, "rb");
+            
+            if (fp == NULL) {
+                // If file doesn't exist, send a file size indicator of -1 to signify error
+                long error_flag = -1;
+                send(client_sock, &error_flag, sizeof(long), 0);
+                printf("[ERROR] Requested file '%s' could not be opened or found.\n", req.filename);
+            } else {
+                // Get the total size of the target file
+                fseek(fp, 0, SEEK_END);
+                long file_size = ftell(fp);
+                fseek(fp, 0, SEEK_SET);
+
+                // Step 1: Send the actual file size metadata
+                send(client_sock, &file_size, sizeof(long), 0);
+                printf("[TRANSFER] Sending file size metadata: %ld bytes\n", file_size);
+
+                // Step 2: Stream the binary contents in chunks
+                int bytes_read;
+                long total_sent = 0;
+                while ((bytes_read = fread(buffer, 1, BUFFER_SIZE, fp)) > 0) {
+                    send(client_sock, buffer, bytes_read, 0);
+                    total_sent += bytes_read;
+                }
+                fclose(fp);
+                printf("[SUCCESS] Completed transfer of %ld bytes to client.\n", total_sent);
+            }
+        }
+    }
+
+    printf("[SERVER INFO] Client completed tasks and disconnected. Closing socket.\n");
+    close(client_sock);
+    return NULL;
+}
+
+int main() {
+    int server_sock, *client_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len = sizeof(client_addr);
+
+    // Guarantee that our storage environment folder exists
+    mkdir(SHARED_DIR, 0777);
+
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock < 0) { perror("Socket failed"); return 1; }
+
+    int opt = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed"); close(server_sock); return 1;
+    }
+
+    if (listen(server_sock, 10) < 0) {
+        perror("Listen failed"); close(server_sock); return 1;
+    }
+
+    printf("===================================================\n");
+    printf("   CONCURRENT MULTITHREADED FILE SERVER (PORT %d)\n", PORT);
+    printf("   Drop files inside '%s' to share them!\n", SHARED_DIR);
+    printf("===================================================\n\n");
+
+    while (1) {
+        client_sock = malloc(sizeof(int));
+        *client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &client_len);
+        if (*client_sock < 0) {
+            perror("Accept error");
+            free(client_sock);
+            continue;
+        }
+
+        printf("[CONNECT] Connected to new client from IP: %s\n", inet_ntoa(client_addr.sin_addr));
+
+        // Spawn independent processing threads for every newly connected file broker node
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, client_file_handler, client_sock) != 0) {
+            perror("Thread execution step failed");
+            close(*client_sock);
+            free(client_sock);
+        } else {
+            pthread_detach(tid); // Automatically reclaims memory resources on close
+        }
+    }
+
+    close(server_sock);
+    return 0;
+}
