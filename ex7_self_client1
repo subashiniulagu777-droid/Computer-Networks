@@ -1,0 +1,227 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <time.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <pthread.h>
+
+#define PORT 8000
+#define MAX_QUESTIONS 3
+#define BUFFER_SIZE 1024
+
+// Protocol Definitions
+typedef struct {
+    char username[50];
+    char password[50];
+} AuthRequest;
+
+typedef struct {
+    int cmd_type; // 1 = Get Question, 2 = Submit Answer, 3 = Final Score
+    int q_id;
+    char selected_option;
+} ExamPayload;
+
+typedef struct {
+    int status; // 0 = Success/Correct, -1 = Fail/Incorrect
+    char message[BUFFER_SIZE];
+} ServerResponse;
+
+// Structural Data Layouts
+typedef struct {
+    int id;
+    char text[256];
+    char options[4][64];
+    char correct_option;
+} Question;
+
+typedef struct {
+    char username[50];
+    char password[50];
+} User;
+
+// In-Memory Database (Read-Only during exam, safe for concurrent access)
+User user_db[] = {
+    {"student1", "pass123"},
+    {"student2", "exam2026"},
+    {"student3", "secure99"}
+};
+int total_users = 3;
+
+Question question_db[MAX_QUESTIONS] = {
+    {1, "What is the time complexity of searching in a balanced BST?", {"A. O(1)", "B. O(N)", "C. O(log N)", "D. O(N log N)"}, 'C'},
+    {2, "Which transport layer protocol is connectionless?", {"A. TCP", "B. UDP", "C. FTP", "D. HTTP"}, 'B'},
+    {3, "In Linux, which system call is used to create a new process?", {"A. fork()", "B. exec()", "C. wait()", "D. exit()"}, 'A'}
+};
+
+// Thread Synchronization Mutex for writing to the common log file
+pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Time-stamped activity logger
+void log_activity(const char *user, const char *action) {
+    pthread_mutex_lock(&log_mutex);
+    
+    time_t now;
+    time(&now);
+    char *date_str = ctime(&now);
+    date_str[strlen(date_str) - 1] = '\0'; // Remove newline
+
+    printf("[%s] [Student: %s] %s\n", date_str, user, action);
+    
+    pthread_mutex_unlock(&log_mutex);
+}
+
+// Thread entry function for each individual student client session
+void *student_session_handler(void *arg) {
+    int client_sock = *(int *)arg;
+    free(arg); // Free the dynamically allocated socket pointer memory
+    
+    char current_student[50] = "Unauthenticated";
+    AuthRequest auth;
+    ServerResponse res;
+
+    // 1. Enforce Authentication Step First
+    if (recv(client_sock, &auth, sizeof(AuthRequest), 0) <= 0) {
+        close(client_sock);
+        return NULL;
+    }
+
+    int authenticated = 0;
+    for (int i = 0; i < total_users; i++) {
+        if (strcmp(user_db[i].username, auth.username) == 0 && 
+            strcmp(user_db[i].password, auth.password) == 0) {
+            authenticated = 1;
+            strcpy(current_student, auth.username);
+            break;
+        }
+    }
+
+    if (!authenticated) {
+        res.status = -1;
+        strcpy(res.message, "Authentication Failed! Invalid Credentials.");
+        send(client_sock, &res, sizeof(ServerResponse), 0);
+        log_activity("UNKNOWN", "Failed login attempt occurred.");
+        close(client_sock);
+        return NULL;
+    }
+
+    res.status = 0;
+    strcpy(res.message, "Authentication Successful! Welcome to the Examination Engine.");
+    send(client_sock, &res, sizeof(ServerResponse), 0);
+    log_activity(current_student, "Successfully logged in and started exam session.");
+
+    // 2. Initialize dynamic session-specific variables
+    ExamPayload payload;
+    int student_score = 0;
+    int answers_submitted[MAX_QUESTIONS] = {0}; // Track submissions to prevent duplicates
+
+    // 3. Process Exam Request Loop
+    while (recv(client_sock, &payload, sizeof(ExamPayload), 0) > 0) {
+        memset(&res, 0, sizeof(ServerResponse));
+        res.status = -1;
+
+        if (payload.cmd_type == 1) { // Get Question
+            int idx = payload.q_id - 1;
+            if (idx >= 0 && idx < MAX_QUESTIONS) {
+                res.status = 0;
+                sprintf(res.message, "\nQ%d: %s\n%s\n%s\n%s\n%s", 
+                        question_db[idx].id, question_db[idx].text,
+                        question_db[idx].options[0], question_db[idx].options[1],
+                        question_db[idx].options[2], question_db[idx].options[3]);
+            } else {
+                strcpy(res.message, "Error: Question reference out of boundaries.");
+            }
+        } 
+        else if (payload.cmd_type == 2) { // Submit Answer
+            int idx = payload.q_id - 1;
+            if (idx >= 0 && idx < MAX_QUESTIONS) {
+                if (answers_submitted[idx] == 1) {
+                    strcpy(res.message, "Warning: Answer already recorded for this question.");
+                } else {
+                    answers_submitted[idx] = 1;
+                    res.status = 0;
+                    
+                    // Simple score processing engine
+                    if (payload.selected_option == question_db[idx].correct_option) {
+                        student_score++;
+                    }
+                    strcpy(res.message, "Answer recorded successfully.");
+                    char details[64];
+                    sprintf(details, "Submitted option %c for Q%d", payload.selected_option, payload.q_id);
+                    log_activity(current_student, details);
+                }
+            } else {
+                strcpy(res.message, "Error: Invalid Question ID validation framework fail.");
+            }
+        } 
+        else if (payload.cmd_type == 3) { // View Final Score
+            res.status = 0;
+            sprintf(res.message, "Exam Evaluation Complete. Total Score: %d/%d", student_score, MAX_QUESTIONS);
+            log_activity(current_student, "Requested final score layout summary.");
+        } 
+        else {
+            strcpy(res.message, "Error: Invalid operation command parsed.");
+        }
+
+        send(client_sock, &res, sizeof(ServerResponse), 0);
+    }
+
+    log_activity(current_student, "Client disconnected cleanly. Terminating session worker thread.");
+    close(client_sock);
+    return NULL;
+}
+
+int main() {
+    int server_sock, *client_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len = sizeof(client_addr);
+
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock < 0) { perror("Socket setup fail"); return 1; }
+
+    int opt = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed"); close(server_sock); return 1;
+    }
+
+    if (listen(server_sock, 10) < 0) {
+        perror("Listen failed"); close(server_sock); return 1;
+    }
+
+    printf("====================================================\n");
+    printf("   CONCURRENT EXAM MULTITHREADED SERVER (PORT %d)\n", PORT);
+    printf("====================================================\n\n");
+
+    while (1) {
+        client_sock = malloc(sizeof(int)); // Dynamic allocation prevents thread data race conditions
+        *client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &client_len);
+        
+        if (*client_sock < 0) {
+            perror("Accept error");
+            free(client_sock);
+            continue;
+        }
+
+        // Spawn a dedicated thread for the new client connection
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, student_session_handler, client_sock) != 0) {
+            perror("Thread creation failure");
+            close(*client_sock);
+            free(client_sock);
+        } else {
+            // Detach thread to let OS clean resources immediately upon lifecycle finish
+            pthread_detach(tid);
+        }
+    }
+
+    close(server_sock);
+    return 0;
+}
