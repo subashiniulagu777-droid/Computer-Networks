@@ -1,0 +1,257 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <time.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 6000
+#define MAX_TRAINS 3
+#define MAX_BOOKINGS 100
+#define BUFFER_SIZE 512
+
+// Protocol Command Types
+typedef enum {
+    CMD_SEARCH = 1,
+    CMD_AVAILABILITY,
+    CMD_BOOK,
+    CMD_CANCEL,
+    CMD_STATUS
+} CmdType;
+
+// Structures for Request and Response payload
+typedef struct {
+    int cmd_type;
+    int train_id;
+    int tickets_count;
+    int booking_id;
+} Request;
+
+typedef struct {
+    int status; // 0 for Success, -1 for Failure
+    int data1;   // Returns booking_id, available seats, or fare depending on context
+    char message[BUFFER_SIZE];
+} Response;
+
+// Database Structures
+typedef struct {
+    int id;
+    char name[50];
+    char route[50];
+    int available_seats;
+    int fare;
+} Train;
+
+typedef struct {
+    int booking_id;
+    int train_id;
+    int booked_seats;
+    int active; // 1 = Active, 0 = Cancelled
+} Booking;
+
+// Global Databases
+Train train_db[MAX_TRAINS] = {
+    {101, "Express-A", "Chennai-Bangalore", 50, 500},
+    {102, "Express-B", "Bangalore-Mumbai", 30, 1200},
+    {103, "Express-C", "Mumbai-Delhi", 20, 2000}
+};
+Booking booking_db[MAX_BOOKINGS];
+int total_bookings = 0;
+int next_booking_id = 5001;
+
+// Function to log server activity with timestamps
+void log_activity(const char *client_ip, const char *action) {
+    time_t now;
+    time(&now);
+    char *date_str = ctime(&now);
+    date_str[strlen(date_str) - 1] = '\0'; // Remove newline
+    printf("[%s] [Client: %s] %s\n", date_str, client_ip, action);
+}
+
+void handle_client(int client_sock, const char *client_ip) {
+    Request req;
+    Response res;
+    char log_msg[256];
+
+    // Continuously serve this specific client until they disconnect
+    while (recv(client_sock, &req, sizeof(Request), 0) > 0) {
+        memset(&res, 0, sizeof(Response));
+        res.status = -1; // Default to error unless explicitly proven successful
+
+        switch (req.cmd_type) {
+            case CMD_SEARCH:
+                sprintf(res.message, "\n--- Available Trains ---\n");
+                for (int i = 0; i < MAX_TRAINS; i++) {
+                    char temp[128];
+                    sprintf(temp, "ID: %d | %s | Route: %s | Fare: ₹%d\n", 
+                            train_db[i].id, train_db[i].name, train_db[i].route, train_db[i].fare);
+                    strcat(res.message, temp);
+                }
+                res.status = 0;
+                log_activity(client_ip, "Requested train list");
+                break;
+
+            case CMD_AVAILABILITY: {
+                int found = 0;
+                for (int i = 0; i < MAX_TRAINS; i++) {
+                    if (train_db[i].id == req.train_id) {
+                        res.status = 0;
+                        res.data1 = train_db[i].available_seats;
+                        sprintf(res.message, "Train %d has %d seats remaining.", train_db[i].id, train_db[i].available_seats);
+                        found = 1;
+                        break;
+                    }
+                }
+                if (!found) sprintf(res.message, "Error: Invalid Train ID.");
+                sprintf(log_msg, "Checked availability for Train ID %d", req.train_id);
+                log_activity(client_ip, log_msg);
+                break;
+            }
+
+            case CMD_BOOK: {
+                int found = -1;
+                for (int i = 0; i < MAX_TRAINS; i++) {
+                    if (train_db[i].id == req.train_id) { found = i; break; }
+                }
+                
+                if (found == -1) {
+                    sprintf(res.message, "Booking Failed: Invalid Train ID.");
+                } else if (req.tickets_count <= 0) {
+                    sprintf(res.message, "Booking Failed: Invalid number of tickets.");
+                } else if (train_db[found].available_seats < req.tickets_count) {
+                    sprintf(res.message, "Booking Failed: Insufficient seats available.");
+                } else {
+                    // Update Database
+                    train_db[found].available_seats -= req.tickets_count;
+                    booking_db[total_bookings].booking_id = next_booking_id;
+                    booking_db[total_bookings].train_id = req.train_id;
+                    booking_db[total_bookings].booked_seats = req.tickets_count;
+                    booking_db[total_bookings].active = 1;
+
+                    res.status = 0;
+                    res.data1 = next_booking_id;
+                    int total_fare = train_db[found].fare * req.tickets_count;
+                    sprintf(res.message, "Success! Booking ID: %d. Total charged: ₹%d", next_booking_id, total_fare);
+                    
+                    sprintf(log_msg, "SUCCESSFUL BOOKING: ID %d, Train %d, %d seats", next_booking_id, req.train_id, req.tickets_count);
+                    log_activity(client_ip, log_msg);
+                    
+                    next_booking_id++;
+                    total_bookings++;
+                }
+                if (res.status == -1) {
+                    sprintf(log_msg, "FAILED BOOKING attempt for Train %d", req.train_id);
+                    log_activity(client_ip, log_msg);
+                }
+                break;
+            }
+
+            case CMD_CANCEL: {
+                int found = -1;
+                for (int i = 0; i < total_bookings; i++) {
+                    if (booking_db[i].booking_id == req.booking_id && booking_db[i].active == 1) {
+                        found = i; break;
+                    }
+                }
+
+                if (found == -1) {
+                    sprintf(res.message, "Cancellation Failed: Invalid or already inactive Booking ID.");
+                } else {
+                    // Return seats to train database
+                    for (int j = 0; j < MAX_TRAINS; j++) {
+                        if (train_db[j].id == booking_db[found].train_id) {
+                            train_db[j].available_seats += booking_db[found].booked_seats;
+                            break;
+                        }
+                    }
+                    booking_db[found].active = 0; // Mark inactive
+                    res.status = 0;
+                    sprintf(res.message, "Success! Booking ID %d has been cancelled.", req.booking_id);
+                    sprintf(log_msg, "CANCELLED BOOKING: ID %d", req.booking_id);
+                    log_activity(client_ip, log_msg);
+                }
+                break;
+            }
+
+            case CMD_STATUS: {
+                int found = -1;
+                for (int i = 0; i < total_bookings; i++) {
+                    if (booking_db[i].booking_id == req.booking_id) { found = i; break; }
+                }
+
+                if (found == -1) {
+                    sprintf(res.message, "No status history found for Booking ID %d.", req.booking_id);
+                } else {
+                    res.status = 0;
+                    sprintf(res.message, "Booking ID: %d | Train ID: %d | Seats: %d | Status: %s",
+                            booking_db[found].booking_id, booking_db[found].train_id, 
+                            booking_db[found].booked_seats, booking_db[found].active ? "CONFIRMED" : "CANCELLED");
+                }
+                sprintf(log_msg, "Checked status for Booking ID %d", req.booking_id);
+                log_activity(client_ip, log_msg);
+                break;
+            }
+
+            default:
+                sprintf(res.message, "Error: Unknown instruction received.");
+                log_activity(client_ip, "Sent an unknown system command.");
+                break;
+        }
+
+        send(client_sock, &res, sizeof(Response), 0);
+    }
+
+    log_activity(client_ip, "Client disconnected. Closing session socket.");
+    close(client_sock);
+}
+
+int main() {
+    int server_sock, client_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len = sizeof(client_addr);
+
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock < 0) { perror("Socket error"); return 1; }
+
+    int opt = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind error");
+        close(server_sock);
+        return 1;
+    }
+
+    if (listen(server_sock, 5) < 0) {
+        perror("Listen error");
+        close(server_sock);
+        return 1;
+    }
+
+    printf("==================================================\n");
+    printf("   ITERATIVE TCP RAILWAY SERVER RUNNING (PORT %d)\n", PORT);
+    printf("==================================================\n\n");
+
+    // The Iterative Architecture Loop
+    while (1) {
+        printf("Waiting to accept the next transaction client connection...\n");
+        client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &client_len);
+        if (client_sock < 0) { perror("Accept error"); continue; }
+
+        char *client_ip = inet_ntoa(client_addr.sin_addr);
+        log_activity(client_ip, "Connected successfully.");
+
+        // Hand control off synchronously. 
+        // This function blocks until this individual client drops.
+        handle_client(client_sock, client_ip); 
+    }
+
+    close(server_sock);
+    return 0;
+}
