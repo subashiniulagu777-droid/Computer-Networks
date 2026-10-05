@@ -1,0 +1,150 @@
+#include "headerFiles.h"
+
+int main(int argc, char *argv[])
+{
+    // Declare and define
+
+    SOCKET s;                          // Socket
+
+    int arr[100];                      // Received array
+    int size;                          // Number of elements
+    int i;                             // Loop variable
+    int sum;                           // Sum of array
+
+    char *servName;                    // Server IP
+    int servPort;                      // Server port
+
+    struct sockaddr_in serverAddr;     // Server address
+
+    WSADATA wsa;                       // Winsock data
+
+
+    // Initialize Winsock
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    {
+        printf("Error: WSAStartup failed!\n");
+        exit(1);
+    }
+
+
+    // Check arguments
+
+    if (argc != 3)
+    {
+        printf("Error: two arguments are needed!\n");
+        printf("Usage: arraysum_client <Server IP> <Port>\n");
+
+        WSACleanup();
+        exit(1);
+    }
+
+
+    servName = argv[1];
+    servPort = atoi(argv[2]);
+
+
+    // Create remote server socket address
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+
+    serverAddr.sin_family = AF_INET;
+
+    if (inet_pton(AF_INET,
+                  servName,
+                  &serverAddr.sin_addr) <= 0)
+    {
+        printf("Error: Invalid server IP address!\n");
+
+        WSACleanup();
+        exit(1);
+    }
+
+    serverAddr.sin_port = htons(servPort);
+
+
+    // Create socket
+
+    s = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (s == INVALID_SOCKET)
+    {
+        printf("Error: Socket creation failed!\n");
+
+        WSACleanup();
+        exit(1);
+    }
+
+
+    // Connect to server
+
+    if (connect(s,
+                (struct sockaddr *)&serverAddr,
+                sizeof(serverAddr)) == SOCKET_ERROR)
+    {
+        printf("Error: Connection failed!\n");
+
+        closesocket(s);
+        WSACleanup();
+        exit(1);
+    }
+
+
+    printf("====================================\n");
+    printf("       TCP ARRAY SUM CLIENT\n");
+    printf("====================================\n");
+
+    printf("Connected to server successfully!\n");
+
+
+    // Receive number of elements
+
+    recv(s,
+         (char *)&size,
+         sizeof(size),
+         0);
+
+
+    // Receive array
+
+    recv(s,
+         (char *)arr,
+         size * sizeof(int),
+         0);
+
+
+    // Display array
+
+    printf("\nArray received from server:\n");
+
+    for (i = 0; i < size; i++)
+    {
+        printf("%d ", arr[i]);
+    }
+
+    printf("\n");
+
+
+    // Calculate sum
+
+    sum = 0;
+
+    for (i = 0; i < size; i++)
+    {
+        sum = sum + arr[i];
+    }
+
+
+    // Display sum
+
+    printf("\nSum of array = %d\n", sum);
+
+
+    // Close socket
+
+    closesocket(s);
+
+    WSACleanup();
+
+    return 0;
+}
