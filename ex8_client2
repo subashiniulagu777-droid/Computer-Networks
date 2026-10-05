@@ -1,0 +1,99 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 5000
+#define BUFFER_SIZE 1024
+#define MAX_TOTAL_FRAMES 100 // Dynamic execution size limit safe boundaries
+#define WINDOW_SIZE 4
+
+struct Frame {
+    int seq;
+    char data[BUFFER_SIZE];
+    int received;
+};
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    socklen_t server_len = sizeof(server_addr);
+
+    struct Frame frame;
+    struct Frame rx_buffer[MAX_TOTAL_FRAMES]; // Absolute structural assignment tracking lookup map
+    char ack[20];
+    int expected_seq = 0;
+
+    int delay_frame, delay_seconds;
+    int delayed_once = 0;
+
+    // Zero-out storage fields map
+    int i;
+    for ( i = 0; i < MAX_TOTAL_FRAMES; i++) {
+        rx_buffer[i].received = 0;
+    }
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) { perror("Socket creation error"); return 1; }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    printf("===========================================\n");
+    printf("   SELECTIVE REPEAT CLIENT (ORDER LOCK ENGINE)\n");
+    printf("===========================================\n");
+
+    printf("Enter a specific frame number to delay/drop (-1 for none): ");
+    if (scanf("%d", &delay_frame) != 1) return 1;
+    if (delay_frame != -1) {
+        printf("Enter delay time in seconds: ");
+        if (scanf("%d", &delay_seconds) != 1) return 1;
+    }
+
+    printf("\nRegistering with selective repeat server map...\n");
+    char handshake = 'H';
+    sendto(sock, &handshake, sizeof(handshake), 0, (struct sockaddr *)&server_addr, server_len);
+
+    while (1) {
+        memset(&frame, 0, sizeof(frame));
+        int n = recvfrom(sock, (char *)&frame, sizeof(frame), 0, (struct sockaddr *)&server_addr, &server_len);
+        if (n < 0) { perror("Receive failed"); break; }
+
+        printf("\n[INCOMING] Received Frame %d: %s\n", frame.seq, frame.data);
+
+        if (frame.seq == delay_frame && !delayed_once) {
+            printf("[SIMULATION] Intentionally dropping Frame %d to simulate network packet loss!\n", frame.seq);
+            delayed_once = 1;
+            continue;
+        }
+
+        if (frame.seq >= expected_seq && frame.seq < expected_seq + WINDOW_SIZE) {
+            // Put data exactly in its absolute numerical index bucket slot
+            rx_buffer[frame.seq] = frame;
+            rx_buffer[frame.seq].received = 1;
+
+            sprintf(ack, "ACK %d", frame.seq);
+            sendto(sock, ack, strlen(ack), 0, (struct sockaddr *)&server_addr, server_len);
+            printf("[SENT] %s\n", ack);
+
+            // Flush out chunks only sequentially from current baseline expected counter pointer onwards
+            while (rx_buffer[expected_seq].received == 1) {
+                printf("[DELIVERED TO APP] Processed sequential Frame %d: %s\n",
+                       rx_buffer[expected_seq].seq, rx_buffer[expected_seq].data);
+                expected_seq++;
+            }
+        }
+        else if (frame.seq < expected_seq) {
+            sprintf(ack, "ACK %d", frame.seq);
+            sendto(sock, ack, strlen(ack), 0, (struct sockaddr *)&server_addr, server_len);
+            printf("[DUPLICATE] Sent historical fallback %s\n", ack);
+        }
+    }
+
+    close(sock);
+    return 0;
+}
