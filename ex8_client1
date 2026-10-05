@@ -1,0 +1,81 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define PORT 5000
+#define BUFFER_SIZE 1024
+
+struct Frame {
+    int seq;
+    char data[BUFFER_SIZE];
+};
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    socklen_t server_len = sizeof(server_addr);
+
+    struct Frame frame;
+    char ack[50];
+    int expected_seq = 0;
+
+    int delay_frame, delay_seconds;
+    int delayed_once = 0;
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) { perror("Socket creation error"); return 1; }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    printf("===========================================\n");
+    printf("   SLIDING WINDOW CLIENT RECEIVER\n");
+    printf("===========================================\n");
+
+    printf("Enter a specific frame number to delay (-1 for none): ");
+    if (scanf("%d", &delay_frame) != 1) return 1;
+    if (delay_frame != -1) {
+        printf("Enter delay time in seconds: ");
+        if (scanf("%d", &delay_seconds) != 1) return 1;
+    }
+
+    printf("\nPoking server to register client address...\n");
+    char handshake = 'H';
+    sendto(sock, &handshake, sizeof(handshake), 0, (struct sockaddr *)&server_addr, server_len);
+
+    while (1) {
+        memset(&frame, 0, sizeof(frame));
+        int n = recvfrom(sock, (char *)&frame, sizeof(frame), 0, (struct sockaddr *)&server_addr, &server_len);
+        if (n < 0) { perror("Receive failed"); break; }
+
+        printf("\n[INCOMING] Received Frame %d: %s\n", frame.seq, frame.data);
+
+        if (frame.seq == expected_seq) {
+            printf("[ACCEPT] Frame matches expected index %d.\n", expected_seq);
+
+            // Timeout test panna indha delay-ai use pannalam
+            if (frame.seq == delay_frame && !delayed_once) {
+                printf("[SIMULATION] Holding back ACK %d for %d seconds...\n", frame.seq, delay_seconds);
+                sleep(delay_seconds);
+                delayed_once = 1;
+            }
+
+            sprintf(ack, "ACK %d", expected_seq);
+            expected_seq++;
+        } else {
+            printf("[DROP] Out of order frame! Expected %d, got %d.\n", expected_seq, frame.seq);
+            sprintf(ack, "ACK %d", expected_seq - 1);
+        }
+
+        sendto(sock, ack, strlen(ack), 0, (struct sockaddr *)&server_addr, server_len);
+        printf("[SENT] %s\n", ack);
+    }
+
+    close(sock);
+    return 0;
+}
