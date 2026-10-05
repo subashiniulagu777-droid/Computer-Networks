@@ -1,0 +1,362 @@
+#include "header.h"
+
+/* Internet Checksum */
+
+unsigned short calculateChecksum(char data[], int len)
+{
+    unsigned long sum = 0;
+    int i;
+
+    for(i = 0; i < len; i = i + 2)
+    {
+        unsigned short word;
+
+        if(i + 1 < len)
+        {
+            word = ((unsigned short)(unsigned char)data[i] << 8)
+                    | (unsigned char)data[i + 1];
+        }
+        else
+        {
+            word = ((unsigned short)(unsigned char)data[i] << 8);
+        }
+
+        sum = sum + word;
+
+        while(sum >> 16)
+        {
+            sum = (sum & 0xFFFF) + (sum >> 16);
+        }
+    }
+
+    return (unsigned short)(~sum);
+}
+
+
+/* Display binary */
+
+void displayBinary(char data[], int len)
+{
+    int i;
+    int j;
+
+    for(i = 0; i < len; i++)
+    {
+        for(j = 7; j >= 0; j--)
+        {
+            printf("%d", (data[i] >> j) & 1);
+        }
+
+        printf(" ");
+    }
+
+    printf("\n");
+}
+
+
+/* Byte Stuffing */
+
+int byteStuff(char data[], int len, char stuffed[])
+{
+    int i;
+    int j = 0;
+
+    for(i = 0; i < len; i++)
+    {
+        if((unsigned char)data[i] == FLAG ||
+           (unsigned char)data[i] == ESC)
+        {
+            stuffed[j++] = ESC;
+        }
+
+        stuffed[j++] = data[i];
+    }
+
+    return j;
+}
+
+
+/* Send all data */
+
+int sendAll(SOCKET s, char data[], int len)
+{
+    int total = 0;
+    int n;
+
+    while(total < len)
+    {
+        n = send(s,
+                 data + total,
+                 len - total,
+                 0);
+
+        if(n <= 0)
+        {
+            return 0;
+        }
+
+        total = total + n;
+    }
+
+    return 1;
+}
+
+
+int main()
+{
+    WSADATA wsa;
+
+    SOCKET serverSocket;
+    SOCKET clientSocket;
+
+    struct sockaddr_in serverAddress;
+    struct sockaddr_in clientAddress;
+
+    int clientLength;
+
+    FILE *fp;
+
+    char data[MAX];
+    char stuffed[MAX * 2];
+
+    int dataLength;
+    int stuffedLength;
+
+    unsigned short checksum;
+
+
+    /* Initialize Winsock */
+
+    if(WSAStartup(MAKEWORD(2,2), &wsa) != 0)
+    {
+        printf("WSAStartup failed\n");
+        return 1;
+    }
+
+
+    /* Create Server Socket */
+
+    serverSocket = socket(
+        AF_INET,
+        SOCK_STREAM,
+        0
+    );
+
+    if(serverSocket == INVALID_SOCKET)
+    {
+        printf("Socket creation failed\n");
+
+        WSACleanup();
+
+        return 1;
+    }
+
+
+    /* Server Address */
+
+    serverAddress.sin_family = AF_INET;
+
+    serverAddress.sin_addr.s_addr =
+        htonl(INADDR_ANY);
+
+    serverAddress.sin_port =
+        htons(SERV_PORT);
+
+
+    /* Bind */
+
+    if(bind(
+        serverSocket,
+        (struct sockaddr *)&serverAddress,
+        sizeof(serverAddress)
+    ) == SOCKET_ERROR)
+    {
+        printf("Bind failed\n");
+
+        closesocket(serverSocket);
+        WSACleanup();
+
+        return 1;
+    }
+
+
+    /* Listen */
+
+    listen(serverSocket, 5);
+
+    printf("Server waiting for client...\n");
+
+
+    /* Accept Client */
+
+    clientLength = sizeof(clientAddress);
+
+    clientSocket = accept(
+        serverSocket,
+        (struct sockaddr *)&clientAddress,
+        &clientLength
+    );
+
+    if(clientSocket == INVALID_SOCKET)
+    {
+        printf("Accept failed\n");
+
+        closesocket(serverSocket);
+        WSACleanup();
+
+        return 1;
+    }
+
+    printf("Client connected successfully!\n");
+
+
+    /* Read message from file */
+
+    fp = fopen("message.txt", "rb");
+
+    if(fp == NULL)
+    {
+        printf("message.txt not found\n");
+
+        closesocket(clientSocket);
+        closesocket(serverSocket);
+
+        WSACleanup();
+
+        return 1;
+    }
+
+
+    dataLength = fread(
+        data,
+        1,
+        MAX - 1,
+        fp
+    );
+
+    fclose(fp);
+
+    data[dataLength] = '\0';
+
+
+    printf("\nOriginal Message:\n");
+    printf("%s\n", data);
+
+
+    /* Display Binary */
+
+    printf("\nBinary Data:\n");
+
+    displayBinary(
+        data,
+        dataLength
+    );
+
+
+    /* Calculate Internet Checksum */
+
+    checksum = calculateChecksum(
+        data,
+        dataLength
+    );
+
+
+    printf("\nOriginal Internet Checksum:\n");
+    int i;
+    for(i = 15; i >= 0; i--)
+    {
+        printf("%d",
+               (checksum >> i) & 1);
+    }
+
+    printf("\n");
+
+
+    /* Byte Stuffing */
+
+    stuffedLength =
+        byteStuff(
+            data,
+            dataLength,
+            stuffed
+        );
+
+
+    printf("\nStuffed Data to be sent:\n");
+
+    displayBinary(
+        stuffed,
+        stuffedLength
+    );
+
+
+    /* Send data length */
+
+    {
+        int networkLength;
+
+        networkLength =
+            htonl(dataLength);
+
+        sendAll(
+            clientSocket,
+            (char *)&networkLength,
+            sizeof(networkLength)
+        );
+    }
+
+
+    /* Send stuffed length */
+
+    {
+        int networkStuffedLength;
+
+        networkStuffedLength =
+            htonl(stuffedLength);
+
+        sendAll(
+            clientSocket,
+            (char *)&networkStuffedLength,
+            sizeof(networkStuffedLength)
+        );
+    }
+
+
+    /* Send stuffed data */
+
+    sendAll(
+        clientSocket,
+        stuffed,
+        stuffedLength
+    );
+
+
+    /* Send ORIGINAL checksum */
+
+    {
+        unsigned short networkChecksum;
+
+        networkChecksum =
+            htons(checksum);
+
+        sendAll(
+            clientSocket,
+            (char *)&networkChecksum,
+            sizeof(networkChecksum)
+        );
+    }
+
+
+    printf("\nData sent successfully to Client.\n");
+
+
+    /* Close */
+
+    closesocket(clientSocket);
+
+    closesocket(serverSocket);
+
+    WSACleanup();
+
+    return 0;
+}
