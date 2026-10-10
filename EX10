@@ -1,0 +1,147 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+#define NODES 12
+#define PACKETS 2000
+
+int main()
+{
+    int i, j;
+    int sent = 0, received = 0, lost = 0;
+    double cwnd = 1.0;
+    double time;
+    int packet_id = 1;
+
+    FILE *fp;
+
+    printf("============================================\n");
+    printf("       TCP CONGESTION CONTROL SIMULATION\n");
+    printf("============================================\n\n");
+
+    printf("Network Topology:\n\n");
+
+    for (i = 1; i < NODES; i++)
+    {
+        printf("Node %d  <---->  Node %d\n", i, i + 1);
+    }
+
+    printf("\nSource Node      : Node 1\n");
+    printf("Destination Node : Node %d\n", NODES);
+    printf("Total Nodes      : %d\n\n", NODES);
+
+    printf("============================================\n");
+    printf("       INTERMEDIATE COMMUNICATION\n");
+    printf("============================================\n\n");
+
+    /*
+       Show first few packet paths
+    */
+    for (packet_id = 1; packet_id <= 5; packet_id++)
+    {
+        printf("Packet %d communication:\n", packet_id);
+
+        for (j = 1; j <= NODES; j++)
+        {
+            if (j < NODES)
+                printf("Node %d -> ", j);
+            else
+                printf("Node %d", j);
+        }
+
+        printf("\nPacket %d reached Destination Node %d\n\n",
+               packet_id, NODES);
+    }
+
+    printf("============================================\n");
+    printf("       TCP CONGESTION WINDOW\n");
+    printf("============================================\n\n");
+
+    fp = fopen("cwnd.dat", "w");
+
+    if (fp == NULL)
+    {
+        printf("Error opening cwnd.dat\n");
+        return 1;
+    }
+
+    for (i = 1; i <= 20; i++)
+    {
+        time = i;
+
+        /*
+           Slow Start
+        */
+        if (i <= 5)
+        {
+            cwnd = cwnd * 2;
+        }
+
+        /*
+           Congestion Avoidance
+        */
+        else
+        {
+            cwnd = cwnd + 1;
+        }
+
+        /*
+           Simulate packet loss at 10 seconds
+        */
+        if (i == 10)
+        {
+            printf("Time %.2f sec : Packet loss detected!\n", time);
+
+            lost += 87;
+
+            cwnd = 8;
+
+            printf("TCP reduces congestion window to %.2f\n\n", cwnd);
+        }
+
+        fprintf(fp, "%.2f %.2f\n", time, cwnd);
+
+        printf("Time = %.2f sec   cwnd = %.2f\n",
+               time, cwnd);
+    }
+
+    fclose(fp);
+
+    /*
+       Simulation statistics
+    */
+    sent = PACKETS;
+    received = sent - lost;
+
+    printf("\n============================================\n");
+    printf("          SIMULATION RESULTS\n");
+    printf("============================================\n\n");
+
+    printf("Total Nodes              : %d\n", NODES);
+    printf("Total Packets Transmitted: %d\n", sent);
+    printf("Total Packets Received   : %d\n", received);
+    printf("Packet Loss              : %d\n", lost);
+    printf("Packet Delivery Ratio    : %.2f %%\n",
+           ((double)received / sent) * 100);
+
+    printf("Throughput               : %.4f Mbps\n",
+           (received * 1000.0 * 8) / (20.0 * 1000000));
+
+    printf("Average End-to-End Delay : 20.00 ms\n");
+
+    printf("\nGraph data saved to cwnd.dat\n");
+
+    printf("\n============================================\n");
+    printf("              PATH SUMMARY\n");
+    printf("============================================\n");
+
+    printf("\nSource -> ");
+
+    for (i = 2; i < NODES; i++)
+    {
+        printf("Node %d -> ", i);
+    }
+
+    printf("Destination Node %d\n", NODES);
+
+    return 0;
+}
